@@ -12,6 +12,7 @@ For each HTML found:
 Also minifies standalone CSS/JS files not included in any bundle.
 """
 
+import argparse
 import hashlib
 import os
 import re
@@ -314,67 +315,94 @@ def _bundle_js(html_path: Path, soup: BeautifulSoup, root: Path) -> int:
     return len(local)
 
 
-def optimize_directory(output_dir: str) -> dict:
+def optimize_directory(
+    output_dir: str,
+    bundle_css: bool = True,
+    bundle_js: bool = True,
+    compress_images: bool = True,
+    compress_html: bool = True,
+    convert_fonts: bool = True,
+) -> dict:
     root = Path(output_dir)
     stats = {"html": 0, "css": 0, "js": 0, "fonts": 0, "images": 0}
 
-    stats["fonts"] = _convert_fonts(root)
-    stats["images"] = _convert_images(root)
+    if convert_fonts:
+        stats["fonts"] = _convert_fonts(root)
+    if compress_images:
+        stats["images"] = _convert_images(root)
 
     for html_path in root.rglob("*.html"):
         try:
             raw = html_path.read_text(encoding="utf-8", errors="ignore")
             soup = BeautifulSoup(raw, "html.parser")
 
-            stats["css"] += _bundle_css(html_path, soup, root)
-            # stats["js"] += _bundle_js(html_path, soup, root)
+            if bundle_css:
+                stats["css"] += _bundle_css(html_path, soup, root)
+            if bundle_js:
+                stats["js"] += _bundle_js(html_path, soup, root)
 
-            html_min = htmlmin.minify(
-                str(soup),
-                remove_comments=True,
-                remove_empty_space=True,
-                reduce_boolean_attributes=True,
-                remove_optional_attribute_quotes=False,
-            )
-            html_path.write_text(html_min, encoding="utf-8")
+            if compress_html:
+                html_out = htmlmin.minify(
+                    str(soup),
+                    remove_comments=True,
+                    remove_empty_space=True,
+                    reduce_boolean_attributes=True,
+                    remove_optional_attribute_quotes=False,
+                )
+                html_path.write_text(html_out, encoding="utf-8")
+                print(f"[optimize] {html_path.name}: {len(raw)} → {len(html_out)} bytes")
+            elif bundle_css or bundle_js:
+                html_out = str(soup)
+                html_path.write_text(html_out, encoding="utf-8")
             stats["html"] += 1
-            print(f"[optimize] {html_path.name}: {len(raw)} → {len(html_min)} bytes")
         except Exception as exc:
             print(f"[optimize] warning: {html_path}: {exc}", file=sys.stderr)
 
-    # Minify standalone CSS/JS files not included in any bundle
-    for css_path in root.rglob("*.css"):
-        if css_path.name.startswith("bundle."):
-            continue
-        try:
-            content = css_path.read_text(encoding="utf-8", errors="ignore")
-            css_path.write_text(rcssmin.cssmin(content), encoding="utf-8")
-        except Exception:
-            pass
+    if bundle_css:
+        for css_path in root.rglob("*.css"):
+            if css_path.name.startswith("bundle."):
+                continue
+            try:
+                content = css_path.read_text(encoding="utf-8", errors="ignore")
+                css_path.write_text(rcssmin.cssmin(content), encoding="utf-8")
+            except Exception:
+                pass
 
-    for js_path in root.rglob("*.js"):
-        if js_path.name.startswith("bundle."):
-            continue
-        try:
-            content = js_path.read_text(encoding="utf-8", errors="ignore")
-            js_path.write_text(rjsmin.jsmin(content), encoding="utf-8")
-        except Exception:
-            pass
+    if bundle_js:
+        for js_path in root.rglob("*.js"):
+            if js_path.name.startswith("bundle."):
+                continue
+            try:
+                content = js_path.read_text(encoding="utf-8", errors="ignore")
+                js_path.write_text(rjsmin.jsmin(content), encoding="utf-8")
+            except Exception:
+                pass
 
     return stats
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("usage: optimize.py <OUTPUT_DIR>", file=sys.stderr)
+    parser = argparse.ArgumentParser(description="Optimize static site assets")
+    parser.add_argument("output_dir")
+    parser.add_argument("--no-bundle-css",      dest="bundle_css",      action="store_false")
+    parser.add_argument("--no-bundle-js",        dest="bundle_js",       action="store_false")
+    parser.add_argument("--no-compress-images",  dest="compress_images", action="store_false")
+    parser.add_argument("--no-compress-html",    dest="compress_html",   action="store_false")
+    parser.add_argument("--no-convert-fonts",    dest="convert_fonts",   action="store_false")
+    args = parser.parse_args()
+
+    if not Path(args.output_dir).is_dir():
+        print(f"directory does not exist: {args.output_dir}", file=sys.stderr)
         sys.exit(2)
 
-    output_dir = sys.argv[1]
-    if not Path(output_dir).is_dir():
-        print(f"directory does not exist: {output_dir}", file=sys.stderr)
-        sys.exit(2)
-
-    stats = optimize_directory(output_dir)
+    stats = optimize_directory(
+        args.output_dir,
+        bundle_css=args.bundle_css,
+        bundle_js=args.bundle_js,
+        compress_images=args.compress_images,
+        compress_html=args.compress_html,
+        convert_fonts=args.convert_fonts,
+    )
     print(
         f"[optimize] done — "
         f"{stats['html']} HTML, {stats['css']} CSS, {stats['js']} JS, "

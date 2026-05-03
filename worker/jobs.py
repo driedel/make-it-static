@@ -88,6 +88,7 @@ def deploy_page(
     post_id: int,
     cloudfront_distribution_id: str = "",
     extra_cdn: list[str] | None = None,
+    options: dict | None = None,
 ) -> dict:
     """
     Full job: scrape → postprocess → S3 → CloudFront invalidate.
@@ -102,6 +103,12 @@ def deploy_page(
     workdir.mkdir(parents=True)
 
     extra_cdn = extra_cdn or []
+    opts = options or {}
+    bundle_css      = opts.get("bundle_css",      True)
+    bundle_js       = opts.get("bundle_js",        True)
+    compress_images = opts.get("compress_images",  True)
+    compress_html   = opts.get("compress_html",    True)
+    convert_fonts   = opts.get("convert_fonts",    True)
 
     # Hostname extracted from the URL → S3 prefix and reference for rewriting absolute URLs.
     # e.g. "https://lp.mysite.com/blog/post/" → hostname="lp.mysite.com"
@@ -143,8 +150,19 @@ def deploy_page(
             print("[job] warning: postprocess failed, continuing anyway")
 
         # 3. optimization (CSS/JS bundle + minification)
+        opt_cmd = ["python", "/app/optimize.py", str(workdir)]
+        if not bundle_css:
+            opt_cmd.append("--no-bundle-css")
+        if not bundle_js:
+            opt_cmd.append("--no-bundle-js")
+        if not compress_images:
+            opt_cmd.append("--no-compress-images")
+        if not compress_html:
+            opt_cmd.append("--no-compress-html")
+        if not convert_fonts:
+            opt_cmd.append("--no-convert-fonts")
         opt = subprocess.run(
-            ["python", "/app/optimize.py", str(workdir)],
+            opt_cmd,
             capture_output=True,
             text=True,
         )

@@ -92,12 +92,25 @@ async def publish(req: Request):
     if not isinstance(extra_cdn, list) or not all(isinstance(d, str) for d in extra_cdn):
         raise HTTPException(status_code=400, detail="extra_cdn must be a list of strings")
 
+    # options: per-request optimization toggles (all default to true).
+    raw_options = payload.get("options", {})
+    if not isinstance(raw_options, dict):
+        raise HTTPException(status_code=400, detail="options must be an object")
+    options = {
+        "bundle_css":      bool(raw_options.get("bundle_css",      True)),
+        "bundle_js":       bool(raw_options.get("bundle_js",        True)),
+        "compress_images": bool(raw_options.get("compress_images",  True)),
+        "compress_html":   bool(raw_options.get("compress_html",    True)),
+        "convert_fonts":   bool(raw_options.get("convert_fonts",    True)),
+    }
+
     job = queue.enqueue(
         "jobs.deploy_page",
         url,
         post_id,
         cloudfront_distribution_id,
         extra_cdn,
+        options,
         job_timeout=600,
         result_ttl=3600,
     )

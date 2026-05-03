@@ -232,7 +232,14 @@ X-Signature: <hex hmac-sha256 of raw body>
   "post_id": <int>,
   "ts": <unix epoch>,
   "cloudfront_distribution_id": "<optional>",
-  "extra_cdn": ["<domain1>", "<domain2>"]
+  "extra_cdn": ["<domain1>", "<domain2>"],
+  "options": {
+    "bundle_css":      false,
+    "bundle_js":       false,
+    "compress_images": false,
+    "compress_html":   false,
+    "convert_fonts":   false
+  }
 }
 ```
 
@@ -243,6 +250,17 @@ X-Signature: <hex hmac-sha256 of raw body>
 | `ts` | int | yes | Unix epoch — used in HMAC signature |
 | `cloudfront_distribution_id` | string | no | CloudFront distribution ID; falls back to `CLOUDFRONT_DISTRIBUTION_ID` env var if absent |
 | `extra_cdn` | string[] | no | CDN domains present in the HTML that should also be downloaded (e.g. `["cdn.example.com", "assets.lib.io"]`) |
+| `options` | object | no | Per-request optimization toggles (all default to `true` when omitted) |
+
+**`options` fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `bundle_css` | bool | `true` | Bundle and minify local CSS files |
+| `bundle_js` | bool | `true` | Bundle and minify local JS files |
+| `compress_images` | bool | `true` | Convert raster images to AVIF/WebP |
+| `compress_html` | bool | `true` | Minify HTML |
+| `convert_fonts` | bool | `true` | Convert TTF/OTF fonts to WOFF2 |
 
 **Response:**
 
@@ -325,6 +343,7 @@ def publish_page(
     post_id: int,
     cloudfront_distribution_id: str = "",
     extra_cdn: list[str] | None = None,
+    options: dict | None = None,
 ) -> dict:
     payload = {
         "url": url,
@@ -332,6 +351,7 @@ def publish_page(
         "ts": int(time.time()),
         **({"cloudfront_distribution_id": cloudfront_distribution_id} if cloudfront_distribution_id else {}),
         **({"extra_cdn": extra_cdn} if extra_cdn else {}),
+        **({"options": options} if options else {}),
     }
     body = json.dumps(payload, separators=(",", ":")).encode()
     ts = str(int(time.time()))
@@ -354,11 +374,12 @@ def get_job(job_id: str) -> dict:
     return requests.get(f"{API_URL}/jobs/{job_id}").json()
 
 
-# Trigger the deploy (with extra CDN)
+# Trigger the deploy (disabling image and font processing for this site)
 result = publish_page(
     "https://www.yoursite.com/blog/my-post/",
     post_id=42,
     extra_cdn=["cdn.yoursite.com", "assets.lib.io"],
+    options={"compress_images": False, "convert_fonts": False},
 )
 print(result)  # {"job_id": "abc...", "status": "queued"}
 
@@ -375,7 +396,11 @@ print(status)  # {"status": "finished", "result": {...}}
   "url": "https://lp.my-website.com.br/subpage/",
   "post_id": 1,
   "ts": 0,
-  "extra_cdn": ["cdn.my-website.com.br"]
+  "extra_cdn": ["cdn.my-website.com.br"],
+  "options": {
+    "bundle_css": false,
+    "bundle_js": false
+  }
 }
 ```
 
@@ -389,6 +414,7 @@ const body = JSON.stringify({
   post_id: 1,
   ts: parseInt(ts),
   extra_cdn: ["cdn.my-website.com.br"], // optional — omit if no extra CDN
+  options: { bundle_css: false, bundle_js: false }, // optional — omit to use defaults
 });
 
 const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);
