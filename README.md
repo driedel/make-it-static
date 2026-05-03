@@ -58,7 +58,7 @@ ORIGIN_HOST=staging.yoursite.com   # origin site domain
 ### 2. Start the services
 
 ```bash
-docker network create suno-static-service-net
+docker network create make-it-static-network
 docker compose up --build
 ```
 
@@ -372,23 +372,23 @@ print(status)  # {"status": "finished", "result": {...}}
 #### body
 ```json
 {
-  "url": "https://lp.suno.com.br/ebooks/",
+  "url": "https://lp.my-website.com.br/subpage/",
   "post_id": 1,
   "ts": 0,
-  "extra_cdn": ["cdn.suno.com.br"]
+  "extra_cdn": ["cdn.my-website.com.br"]
 }
 ```
 
 #### scripts > pre-request
 ```javascript
-const secret = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"; // HMAC_SECRET from your .env
+const secret = "your-app-secret-key"; // HMAC_SECRET from your .env
 const ts = Math.floor(Date.now() / 1000).toString();
 
 const body = JSON.stringify({
-  url: "https://lp.suno.com.br/ebooks/",
+  url: "https://lp.my-website.com.br/subpage/",
   post_id: 1,
   ts: parseInt(ts),
-  extra_cdn: ["cdn.suno.com.br"], // optional — omit if no extra CDN
+  extra_cdn: ["cdn.my-website.com.br"], // optional — omit if no extra CDN
 });
 
 const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);
