@@ -193,7 +193,7 @@ def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, mock_s3, mock_
     mock_run.return_value = _make_mock_subprocess()
     from jobs import deploy_page
 
-    deploy_page(url="https://example.com/", post_id=1)
+    deploy_page(url="https://example.com/", post_id=99)
 
     optimize_call = [c for c in mock_run.call_args_list if "optimize.py" in str(c)][0]
     optimize_cmd = optimize_call.args[0]
