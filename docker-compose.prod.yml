@@ -1,0 +1,36 @@
+# Production: docker compose -f docker-compose.prod.yml up -d
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"   # expose only to localhost; Caddy/nginx handles TLS
+    depends_on:
+      - redis
+    networks:
+      - default
+      - suno-static-service-net
+
+  worker:
+    build: ./worker
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - redis
+    networks:
+      - default
+      - suno-static-service-net
+
+volumes:
+  redis-data:
+
+networks:
+  suno-static-service-net:
+    external: true

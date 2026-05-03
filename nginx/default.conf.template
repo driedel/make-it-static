@@ -1,0 +1,20 @@
+server {
+    listen 80;
+
+    location / {
+        # Local preview only — not used in production.
+        # ${S3_BUCKET} and ${ORIGIN_HOST} are substituted by envsubst in nginx:alpine.
+        # ORIGIN_HOST is defined in .env only for this preview; the worker does not use
+        # this variable (it derives the hostname from the URL in each incoming request).
+        #
+        # /path/   →  /{bucket}/{host}/path/index.html
+        # /path    →  /{bucket}/{host}/path/index.html (no extension)
+        # /file    →  /{bucket}/{host}/file (CSS, JS, images, etc.)
+        rewrite ^(.*)/$ /${S3_BUCKET}/${ORIGIN_HOST}$1/index.html break;
+        rewrite ^([^.]+)$ /${S3_BUCKET}/${ORIGIN_HOST}$1/index.html break;
+        rewrite ^(.*)$ /${S3_BUCKET}/${ORIGIN_HOST}$1 break;
+
+        proxy_pass http://minio:9000/;
+        proxy_set_header Host minio:9000;
+    }
+}
