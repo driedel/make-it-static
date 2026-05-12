@@ -126,36 +126,42 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
     def resolve(url: str) -> str:
         return url if is_absolute(url) else urljoin(base_url, url)
 
-    # href="..." and src="..."
-    text = re.sub(
-        r'((?:href|src)=)(["\'])([^"\']+)\2',
-        lambda m: f'{m.group(1)}{m.group(2)}{resolve(m.group(3))}{m.group(2)}',
-        text,
-        flags=re.IGNORECASE,
-    )
+    def fix_chunk(chunk: str) -> str:
+        # href="..." and src="..."
+        chunk = re.sub(
+            r'((?:href|src)=)(["\'])([^"\']+)\2',
+            lambda m: f'{m.group(1)}{m.group(2)}{resolve(m.group(3))}{m.group(2)}',
+            chunk,
+            flags=re.IGNORECASE,
+        )
 
-    # srcset="url1 w1, url2 w2, ..."
-    def fix_srcset(m: re.Match) -> str:
-        q = m.group(1)
-        entries = []
-        for entry in m.group(2).split(","):
-            tokens = entry.strip().split()
-            if tokens:
-                tokens[0] = resolve(tokens[0])
-            entries.append(" ".join(tokens))
-        return f'srcset={q}{", ".join(entries)}{q}'
+        # srcset="url1 w1, url2 w2, ..."
+        def fix_srcset(m: re.Match) -> str:
+            q = m.group(1)
+            entries = []
+            for entry in m.group(2).split(","):
+                tokens = entry.strip().split()
+                if tokens:
+                    tokens[0] = resolve(tokens[0])
+                entries.append(" ".join(tokens))
+            return f'srcset={q}{", ".join(entries)}{q}'
 
-    text = re.sub(r'srcset=(["\'])([^"\']+)\1', fix_srcset, text, flags=re.IGNORECASE)
+        chunk = re.sub(r'srcset=(["\'])([^"\']+)\1', fix_srcset, chunk, flags=re.IGNORECASE)
 
-    # Internal links ending in /index.html → strip to /
-    text = re.sub(
-        r'((?:href|src)=["\'])(/[^"\']*/)index\.html(["\'])',
-        r'\1\2\3',
-        text,
-        flags=re.IGNORECASE,
-    )
+        # Internal links ending in /index.html → strip to /
+        chunk = re.sub(
+            r'((?:href|src)=["\'])(/[^"\']*/)index\.html(["\'])',
+            r'\1\2\3',
+            chunk,
+            flags=re.IGNORECASE,
+        )
 
-    return text
+        return chunk
+
+    # Split on <script> blocks so JS string contents (e.g. template literals with
+    # href="${expr}") are not mistaken for relative HTML attribute URLs.
+    segments = re.split(r'(<script[\s\S]*?</script>)', text, flags=re.IGNORECASE)
+    return "".join(fix_chunk(part) if i % 2 == 0 else part for i, part in enumerate(segments))
 
 
 def main():

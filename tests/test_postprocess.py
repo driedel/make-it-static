@@ -204,3 +204,21 @@ def test_absolutize_data_href_unchanged(tmp_path):
     html_path.touch()
     text = absolutize_html_urls('<img src="data:image/png;base64,abc">', html_path, tmp_path)
     assert "data:image/png;base64,abc" in text
+
+
+def test_absolutize_does_not_rewrite_href_inside_script(tmp_path):
+    """JS template literals like href="${expr}" must not be treated as relative URLs."""
+    html_path = tmp_path / "consultoria" / "aplicacao" / "index.html"
+    html_path.parent.mkdir(parents=True)
+    html_path.touch()
+    html = (
+        '<script>'
+        '`<a href="${slide.btnLink}" class="card-btn">watch</a>`'
+        '</script>'
+        '<a href="page.html">real link</a>'
+    )
+    result = absolutize_html_urls(html, html_path, tmp_path)
+    # JS template expression must be unchanged
+    assert 'href="${slide.btnLink}"' in result
+    # Real HTML relative link must be absolutized
+    assert 'href="/consultoria/aplicacao/page.html"' in result
