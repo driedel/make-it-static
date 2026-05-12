@@ -7,10 +7,39 @@ import pathlib
 import re
 import shutil
 import subprocess
+import threading
 from datetime import datetime
 from urllib.parse import urlparse
 
 from deploy import invalidate_cloudfront, sync_to_s3
+
+
+def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
+    """Run a command, streaming stdout+stderr to the console line by line."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    lines: list[str] = []
+
+    def _reader():
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            print(line, flush=True)
+            lines.append(line)
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        t.join()
+        raise
+    t.join()
+    return subprocess.CompletedProcess(cmd, proc.returncode, "\n".join(lines), "")
 
 WORK_ROOT = pathlib.Path("/tmp/deploys")
 WORK_ROOT.mkdir(exist_ok=True)
@@ -119,37 +148,27 @@ def deploy_page(
 
     try:
         # 1. scrape
+        print(f"[job] step 1/4: scraping {url}", flush=True)
         scrape_cmd = ["bash", "/app/scrape.sh", url, str(workdir)]
         if extra_cdn:
             scrape_cmd.append(",".join(extra_cdn))
-        scrape = subprocess.run(
-            scrape_cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        print(scrape.stdout)
+        scrape = _run(scrape_cmd, timeout=300)
         if scrape.returncode != 0:
-            print(scrape.stderr)
-            raise RuntimeError(f"scrape failed (rc={scrape.returncode}):\n{scrape.stderr[-2000:]}")
+            raise RuntimeError(f"scrape failed (rc={scrape.returncode}):\n{scrape.stdout[-2000:]}")
 
         # 1b. CDN assets loaded via JS (createElement + .href/.src = 'https://cdn/...')
         if extra_cdn:
             dyn = download_dynamic_cdn_assets(workdir, extra_cdn)
-            print(f"[job] {dyn} dynamic CDN asset(s) downloaded")
+            print(f"[job] {dyn} dynamic CDN asset(s) downloaded", flush=True)
 
         # 2. HTML cleanup — remove absolute references to origin host and each extra CDN
-        pp = subprocess.run(
-            ["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn,
-            capture_output=True,
-            text=True,
-        )
-        print(pp.stdout)
+        print("[job] step 2/4: postprocessing HTML", flush=True)
+        pp = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
         if pp.returncode != 0:
-            print(pp.stderr)
-            print("[job] warning: postprocess failed, continuing anyway")
+            print("[job] warning: postprocess failed, continuing anyway", flush=True)
 
         # 3. optimization (CSS/JS bundle + minification)
+        print("[job] step 3/4: optimizing assets", flush=True)
         opt_cmd = ["python", "/app/optimize.py", str(workdir)]
         if not bundle_css:
             opt_cmd.append("--no-bundle-css")
@@ -161,17 +180,12 @@ def deploy_page(
             opt_cmd.append("--no-compress-html")
         if not convert_fonts:
             opt_cmd.append("--no-convert-fonts")
-        opt = subprocess.run(
-            opt_cmd,
-            capture_output=True,
-            text=True,
-        )
-        print(opt.stdout)
+        opt = _run(opt_cmd)
         if opt.returncode != 0:
-            print(opt.stderr)
-            print("[job] warning: optimize failed, continuing anyway")
+            print("[job] warning: optimize failed, continuing anyway", flush=True)
 
         # 4. S3 upload
+        print("[job] step 4/4: uploading to S3", flush=True)
         # Top-level prefix = hostname → isolates different sites in the same bucket:
         #   workdir/blog/page/index.html → bucket/{hostname}/blog/page/index.html
         #   workdir/assets/style.css     → bucket/{hostname}/assets/style.css
