@@ -197,6 +197,65 @@ You will see each pipeline step:
 
 ---
 
+## Deploying to production — GitHub Actions
+
+The repository includes an example workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+It is **disabled by default** (manual trigger only) and must be configured before use.
+
+### Prerequisites on the EC2 instance
+
+Connect to the instance via SSH and run once:
+
+```bash
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Create the app directory
+sudo mkdir -p /opt/make-it-static
+sudo chown $USER:$USER /opt/make-it-static
+```
+
+The first deploy (via the workflow) will sync all files into `/opt/make-it-static/`.
+
+### GitHub Secrets
+
+Add the following secrets in **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|--------|-------------|
+| `EC2_HOST` | Public IP or DNS of the instance (e.g. `1.2.3.4`) |
+| `EC2_USER` | SSH user — `ubuntu` for Ubuntu AMIs, `ec2-user` for Amazon Linux |
+| `EC2_SSH_KEY` | Full contents of the `.pem` private key file |
+| `ENV_FILE` | Full contents of the production `.env` file (see *Running in production* above) |
+
+### Security Group
+
+| Type | Port | Source |
+|------|------|--------|
+| SSH | 22 | GitHub Actions IP ranges (or your fixed IP) |
+| HTTPS | 443 | `0.0.0.0/0` (Caddy handles TLS for the API) |
+
+### Activating automatic deploys
+
+The workflow currently only runs on manual trigger. To deploy automatically on every push to `main`, edit `.github/workflows/deploy.yml` and replace:
+
+```yaml
+on:
+  workflow_dispatch:
+```
+
+with:
+
+```yaml
+on:
+  push:
+    branches: ["main"]
+```
+
+---
+
 ## CloudFront — critical configuration
 
 Three points that commonly cause issues on the first setup:

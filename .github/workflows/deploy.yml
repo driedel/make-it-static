@@ -1,0 +1,89 @@
+# Example deploy workflow — EC2 (us-east-1, t4g.small) + AWS S3 + Cloudflare
+#
+# This workflow is intentionally set to manual trigger only (workflow_dispatch).
+# See README.md § "Deploying to production — GitHub Actions" for setup instructions
+# and how to switch to automatic deploys on push to main.
+#
+# Required GitHub Secrets (Settings → Secrets and variables → Actions):
+#   EC2_HOST      — public IP or DNS of the EC2 instance  (e.g. 1.2.3.4)
+#   EC2_USER      — SSH user  (ubuntu  or  ec2-user)
+#   EC2_SSH_KEY   — full contents of the .pem private key file
+#   ENV_FILE      — full contents of the production .env file
+
+name: Deploy to EC2
+
+on:
+  workflow_dispatch:
+
+# Uncomment the block below (and remove workflow_dispatch) to deploy automatically:
+#
+# on:
+#   push:
+#     branches: ["main"]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r api/requirements.txt
+          pip install -r worker/requirements.txt
+          pip install -r tests/requirements.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2.pem
+          chmod 600 ~/.ssh/ec2.pem
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Write .env
+        run: echo "${{ secrets.ENV_FILE }}" > .env
+
+      - name: Sync code to EC2
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'tests/' \
+            --exclude 'nginx/' \
+            --exclude '.env.example' \
+            -e "ssh -i ~/.ssh/ec2.pem" \
+            . "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/opt/make-it-static/"
+
+      - name: Restart services
+        run: |
+          ssh -i ~/.ssh/ec2.pem "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "cd /opt/make-it-static \
+             && docker network create make-it-static-network 2>/dev/null || true \
+             && docker compose -f docker-compose.prod.yml build --pull \
+             && docker compose -f docker-compose.prod.yml up -d --remove-orphans \
+             && docker compose -f docker-compose.prod.yml ps"
+
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/ec2.pem "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "curl -sf http://localhost:8000/health | grep '\"status\":\"ok\"'"
