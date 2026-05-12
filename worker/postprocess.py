@@ -70,6 +70,11 @@ def apply_renames_to_text_files(output_dir: pathlib.Path, renames: list[tuple[st
         modified = text
         for old_name, clean_name in renames:
             modified = modified.replace(old_name, clean_name)
+            # Without --convert-links, HTML keeps the original ?-form (e.g. style.css?ver=6.4.1)
+            # while the file on disk uses @ (style.css@ver=6.4.1). Replace both forms.
+            q_version = old_name.replace("@", "?", 1)
+            if q_version != old_name:
+                modified = modified.replace(q_version, clean_name)
 
         if modified != text:
             text_file.write_text(modified, encoding="utf-8")

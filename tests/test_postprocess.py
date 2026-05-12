@@ -83,6 +83,17 @@ def test_apply_renames_updates_src_in_html(tmp_path):
     assert "app.js@ver=2.0" not in html.read_text()
 
 
+def test_apply_renames_also_replaces_query_string_form(tmp_path):
+    """Without --convert-links, HTML keeps style.css?ver=x instead of style.css@ver=x."""
+    html = tmp_path / "index.html"
+    html.write_text('<link href="style.css?ver=6.4.1" rel="stylesheet">')
+
+    apply_renames_to_text_files(tmp_path, [("style.css@ver=6.4.1", "style.css")])
+
+    assert "style.css?ver=6.4.1" not in html.read_text()
+    assert "style.css" in html.read_text()
+
+
 def test_apply_renames_empty_list_is_noop(tmp_path):
     html = tmp_path / "index.html"
     original = "<p>unchanged</p>"

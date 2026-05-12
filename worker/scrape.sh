@@ -38,16 +38,17 @@ fi
 # Key flags:
 # --recursive --level=0   : unlimited depth — follows all internal links on the domain
 # --page-requisites       : CSS, JS, images, fonts for each downloaded page
-# --convert-links         : rewrites hrefs to point to downloaded files
 # --span-hosts --domains  : downloads assets from external CDNs, but only follows HTML on the main host
 # --no-host-directories   : no folder named after the host — paths mirror the URL directly
 # --restrict-file-names   : replaces ? : * in filenames (required for S3)
 # --reject-regex          : blocks CMS admin, feeds, pagination and search (dynamic/irrelevant)
+# Note: --convert-links is intentionally omitted. It processes <script> content and mangles
+# JS template literals like href="${expr}" into href="/page/path/${expr}". postprocess.py
+# handles all link rewriting instead (origin-host stripping, absolutizing, rename cleanup).
 wget \
   --recursive \
   --level=0 \
   --page-requisites \
-  --convert-links \
   --adjust-extension \
   --span-hosts \
   --domains="$HOST,$EXTRA_DOMAINS" \
