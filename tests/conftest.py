@@ -1,3 +1,5 @@
+"""Pytest configuration — adds api/ and worker/ to sys.path and sets test env vars."""
+
 import os
 import sys
 from pathlib import Path

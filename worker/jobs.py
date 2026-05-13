@@ -114,6 +114,21 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
     return downloaded
 
 
+def _build_opt_cmd(workdir: pathlib.Path, opts: dict) -> list[str]:
+    """Builds the optimize.py subprocess command from the options dict."""
+    cmd = ["python", "/app/optimize.py", str(workdir)]
+    for flag, arg in [
+        ("bundle_css",      "--no-bundle-css"),
+        ("bundle_js",       "--no-bundle-js"),
+        ("compress_images", "--no-compress-images"),
+        ("compress_html",   "--no-compress-html"),
+        ("convert_fonts",   "--no-convert-fonts"),
+    ]:
+        if not opts.get(flag, True):
+            cmd.append(arg)
+    return cmd
+
+
 def deploy_page(
     url: str,
     post_id: int,
@@ -135,11 +150,6 @@ def deploy_page(
 
     extra_cdn = extra_cdn or []
     opts = options or {}
-    bundle_css      = opts.get("bundle_css",      True)
-    bundle_js       = opts.get("bundle_js",        True)
-    compress_images = opts.get("compress_images",  True)
-    compress_html   = opts.get("compress_html",    True)
-    convert_fonts   = opts.get("convert_fonts",    True)
 
     # Hostname extracted from the URL → S3 prefix and reference for rewriting absolute URLs.
     # e.g. "https://lp.mysite.com/blog/post/" → hostname="lp.mysite.com"
@@ -171,18 +181,7 @@ def deploy_page(
 
         # 3. optimization (CSS/JS bundle + minification)
         print("[job] step 3/4: optimizing assets", flush=True)
-        opt_cmd = ["python", "/app/optimize.py", str(workdir)]
-        if not bundle_css:
-            opt_cmd.append("--no-bundle-css")
-        if not bundle_js:
-            opt_cmd.append("--no-bundle-js")
-        if not compress_images:
-            opt_cmd.append("--no-compress-images")
-        if not compress_html:
-            opt_cmd.append("--no-compress-html")
-        if not convert_fonts:
-            opt_cmd.append("--no-convert-fonts")
-        opt = _run(opt_cmd)
+        opt = _run(_build_opt_cmd(workdir, opts))
         if opt.returncode != 0:
             print("[job] warning: optimize failed, continuing anyway", flush=True)
 

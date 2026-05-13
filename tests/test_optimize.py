@@ -1,7 +1,5 @@
 """Tests for optimize.py — CSS/JS bundling, minification, and directory optimization."""
 
-from unittest.mock import MagicMock
-
 from bs4 import BeautifulSoup
 
 from optimize import (

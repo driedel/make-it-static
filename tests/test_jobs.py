@@ -1,9 +1,9 @@
+"""Tests for jobs.py — url_to_prefix, CDN asset download, and deploy_page options."""
+
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from jobs import download_dynamic_cdn_assets, url_to_prefix
+from jobs import deploy_page, download_dynamic_cdn_assets, url_to_prefix
 
 
 # ---------------------------------------------------------------------------
@@ -11,22 +11,27 @@ from jobs import download_dynamic_cdn_assets, url_to_prefix
 # ---------------------------------------------------------------------------
 
 def test_url_to_prefix_root_url_returns_empty_string():
+    """Root URL produces an empty prefix."""
     assert url_to_prefix("https://example.com/") == ""
 
 
 def test_url_to_prefix_path_returns_stripped_path():
+    """URL with a path returns the path stripped of leading and trailing slashes."""
     assert url_to_prefix("https://example.com/blog/my-post/") == "blog/my-post"
 
 
 def test_url_to_prefix_no_trailing_slash():
+    """URL without trailing slash still returns the correct path segment."""
     assert url_to_prefix("https://example.com/page") == "page"
 
 
 def test_url_to_prefix_nested_path():
+    """Nested path is returned without host or slashes."""
     assert url_to_prefix("https://lp.mysite.com/campaigns/promo/") == "campaigns/promo"
 
 
 def test_url_to_prefix_subdomain_ignored():
+    """Subdomain is ignored; root path returns empty string."""
     assert url_to_prefix("https://staging.mysite.com/") == ""
 
 
@@ -35,14 +40,16 @@ def test_url_to_prefix_subdomain_ignored():
 # ---------------------------------------------------------------------------
 
 def test_download_cdn_assets_no_cdn_returns_zero(tmp_path):
+    """Empty CDN list returns zero without downloading anything."""
     assert download_dynamic_cdn_assets(tmp_path, []) == 0
 
 
 def test_download_cdn_assets_finds_url_in_html_and_downloads(tmp_path, monkeypatch):
+    """A CDN URL found in an HTML file is downloaded to the correct local path."""
     html = tmp_path / "index.html"
     html.write_text("var font = 'https://cdn.example.com/assets/font.woff2';")
 
-    def mock_run(cmd, **kwargs):
+    def mock_run(cmd, **_kwargs):
         out_path = Path(cmd[cmd.index("-O") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(b"fake-data")
@@ -59,10 +66,10 @@ def test_download_cdn_assets_finds_url_in_html_and_downloads(tmp_path, monkeypat
 
 
 def test_download_cdn_assets_skips_already_downloaded(tmp_path, monkeypatch):
+    """A CDN URL whose local file already exists is not downloaded again."""
     html = tmp_path / "index.html"
     html.write_text("var url = 'https://cdn.example.com/assets/img.png';")
 
-    # Pre-create the file so the download is skipped
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "img.png").write_bytes(b"existing")
 
@@ -76,8 +83,8 @@ def test_download_cdn_assets_skips_already_downloaded(tmp_path, monkeypatch):
 
 
 def test_download_cdn_assets_deduplicates_urls(tmp_path, monkeypatch):
+    """The same CDN URL referenced twice is only downloaded once."""
     html = tmp_path / "index.html"
-    # Same URL referenced twice
     html.write_text(
         "var a = 'https://cdn.example.com/img.png';\n"
         "var b = 'https://cdn.example.com/img.png';\n"
@@ -85,7 +92,7 @@ def test_download_cdn_assets_deduplicates_urls(tmp_path, monkeypatch):
 
     call_count = []
 
-    def mock_run(cmd, **kwargs):
+    def mock_run(cmd, **_kwargs):
         call_count.append(1)
         out_path = Path(cmd[cmd.index("-O") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,6 +110,7 @@ def test_download_cdn_assets_deduplicates_urls(tmp_path, monkeypatch):
 
 
 def test_download_cdn_assets_ignores_unrelated_cdn(tmp_path, monkeypatch):
+    """URLs from a host not in the CDN list are ignored."""
     html = tmp_path / "index.html"
     html.write_text("var url = 'https://other.cdn.com/assets/img.png';")
 
@@ -131,9 +139,9 @@ def _make_mock_run(returncode=0):
 @patch("jobs.invalidate_cloudfront", return_value="INV-123")
 @patch("jobs.sync_to_s3", return_value=5)
 @patch("jobs._run")
-def test_deploy_page_no_options_flags_when_all_true(mock_run, mock_s3, mock_cf, mock_rm):
+def test_deploy_page_no_options_flags_when_all_true(mock_run, _mock_s3, _mock_cf, _mock_rm):
+    """When all options are True, no --no-* flags are added to the optimize command."""
     mock_run.return_value = _make_mock_run()
-    from jobs import deploy_page
 
     deploy_page(
         url="https://example.com/",
@@ -160,9 +168,9 @@ def test_deploy_page_no_options_flags_when_all_true(mock_run, mock_s3, mock_cf, 
 @patch("jobs.invalidate_cloudfront", return_value=None)
 @patch("jobs.sync_to_s3", return_value=3)
 @patch("jobs._run")
-def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, mock_s3, mock_cf, mock_rm):
+def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, _mock_s3, _mock_cf, _mock_rm):
+    """When all options are False, all --no-* flags appear in the optimize command."""
     mock_run.return_value = _make_mock_run()
-    from jobs import deploy_page
 
     deploy_page(
         url="https://example.com/blog/post/",
@@ -189,9 +197,9 @@ def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, mock_s3, mock
 @patch("jobs.invalidate_cloudfront", return_value=None)
 @patch("jobs.sync_to_s3", return_value=3)
 @patch("jobs._run")
-def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, mock_s3, mock_cf, mock_rm):
+def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, _mock_s3, _mock_cf, _mock_rm):
+    """Omitting options entirely defaults all flags to enabled (no --no-* flags)."""
     mock_run.return_value = _make_mock_run()
-    from jobs import deploy_page
 
     deploy_page(url="https://example.com/", post_id=99)
 
