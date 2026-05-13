@@ -119,7 +119,7 @@ def test_download_cdn_assets_ignores_unrelated_cdn(tmp_path, monkeypatch):
 # deploy_page — options flags forwarded to optimize.py subprocess
 # ---------------------------------------------------------------------------
 
-def _make_mock_subprocess(returncode=0):
+def _make_mock_run(returncode=0):
     result = MagicMock()
     result.returncode = returncode
     result.stdout = ""
@@ -130,9 +130,9 @@ def _make_mock_subprocess(returncode=0):
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value="INV-123")
 @patch("jobs.sync_to_s3", return_value=5)
-@patch("jobs.subprocess.run")
+@patch("jobs._run")
 def test_deploy_page_no_options_flags_when_all_true(mock_run, mock_s3, mock_cf, mock_rm):
-    mock_run.return_value = _make_mock_subprocess()
+    mock_run.return_value = _make_mock_run()
     from jobs import deploy_page
 
     deploy_page(
@@ -159,9 +159,9 @@ def test_deploy_page_no_options_flags_when_all_true(mock_run, mock_s3, mock_cf, 
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value=None)
 @patch("jobs.sync_to_s3", return_value=3)
-@patch("jobs.subprocess.run")
+@patch("jobs._run")
 def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, mock_s3, mock_cf, mock_rm):
-    mock_run.return_value = _make_mock_subprocess()
+    mock_run.return_value = _make_mock_run()
     from jobs import deploy_page
 
     deploy_page(
@@ -188,9 +188,9 @@ def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, mock_s3, mock
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value=None)
 @patch("jobs.sync_to_s3", return_value=3)
-@patch("jobs.subprocess.run")
+@patch("jobs._run")
 def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, mock_s3, mock_cf, mock_rm):
-    mock_run.return_value = _make_mock_subprocess()
+    mock_run.return_value = _make_mock_run()
     from jobs import deploy_page
 
     deploy_page(url="https://example.com/", post_id=99)
