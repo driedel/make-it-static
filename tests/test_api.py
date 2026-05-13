@@ -9,7 +9,6 @@ with patch("redis.Redis.from_url", return_value=MagicMock()), \
      patch("rq.Queue", return_value=MagicMock()):
     import main
 
-import pytest
 from fastapi.testclient import TestClient
 
 SECRET = b"testsecret"
@@ -18,11 +17,11 @@ client = TestClient(main.app)
 
 def _sign(payload: dict, ts_offset: int = 0, corrupt: bool = False):
     body = json.dumps(payload, separators=(",", ":")).encode()
-    ts = str(int(time.time()) + ts_offset)
+    timestamp = str(int(time.time()) + ts_offset)
     sig = hmac.new(SECRET, body, hashlib.sha256).hexdigest()
     if corrupt:
         sig = "0" * len(sig)
-    return body, {"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
+    return body, {"X-Timestamp": timestamp, "X-Signature": sig, "Content-Type": "application/json"}
 
 
 # ---------------------------------------------------------------------------

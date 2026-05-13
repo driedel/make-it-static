@@ -132,6 +132,7 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
         return url if is_absolute(url) else urljoin(base_url, url)
 
     def fix_chunk(chunk: str) -> str:
+        """Rewrite relative URLs in href/src/srcset attributes to absolute paths."""
         # href="..." and src="..."
         chunk = re.sub(
             r'((?:href|src)=)(["\'])([^"\']+)\2',

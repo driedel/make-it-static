@@ -1,6 +1,7 @@
 """
 jobs.py — function executed by the RQ worker for each deploy.
 """
+from __future__ import annotations
 
 import os
 import pathlib
@@ -30,16 +31,17 @@ def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProc
             print(line, flush=True)
             lines.append(line)
 
-    t = threading.Thread(target=_reader, daemon=True)
-    t.start()
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        t.join()
+        reader_thread.join()
         raise
-    t.join()
+    reader_thread.join()
     return subprocess.CompletedProcess(cmd, proc.returncode, "\n".join(lines), "")
+
 
 WORK_ROOT = pathlib.Path("/tmp/deploys")
 WORK_ROOT.mkdir(exist_ok=True)
@@ -163,8 +165,8 @@ def deploy_page(
 
         # 2. HTML cleanup — remove absolute references to origin host and each extra CDN
         print("[job] step 2/4: postprocessing HTML", flush=True)
-        pp = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
-        if pp.returncode != 0:
+        postprocess = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
+        if postprocess.returncode != 0:
             print("[job] warning: postprocess failed, continuing anyway", flush=True)
 
         # 3. optimization (CSS/JS bundle + minification)
