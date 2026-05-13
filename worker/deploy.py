@@ -2,6 +2,7 @@
 deploy.py — uploads to S3 with correct Content-Type / Cache-Control
 and optionally invalidates CloudFront. Compatible with real S3 and MinIO.
 """
+from __future__ import annotations
 
 import mimetypes
 import os

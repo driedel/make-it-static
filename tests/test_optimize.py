@@ -1,7 +1,7 @@
-from pathlib import Path
-from unittest.mock import patch
+"""Tests for optimize.py — CSS/JS bundling, minification, and directory optimization."""
 
-import pytest
+from unittest.mock import MagicMock
+
 from bs4 import BeautifulSoup
 
 from optimize import (
@@ -18,14 +18,17 @@ from optimize import (
 # ---------------------------------------------------------------------------
 
 def test_file_hash_is_deterministic():
+    """Same input always produces the same hash."""
     assert _file_hash("hello") == _file_hash("hello")
 
 
 def test_file_hash_differs_for_different_input():
+    """Different inputs produce different hashes."""
     assert _file_hash("a") != _file_hash("b")
 
 
 def test_file_hash_length_is_eight():
+    """Hash is always 8 characters long."""
     assert len(_file_hash("anything")) == 8
 
 
@@ -34,20 +37,27 @@ def test_file_hash_length_is_eight():
 # ---------------------------------------------------------------------------
 
 def test_rewrite_css_urls_http_unchanged(tmp_path):
+    """Absolute HTTP URLs inside url() are not rewritten."""
     css = tmp_path / "style.css"
     bundle = tmp_path / "bundle.css"
-    result = _rewrite_css_urls("body { background: url(http://example.com/img.png); }", css, bundle, tmp_path)
+    result = _rewrite_css_urls(
+        "body { background: url(http://example.com/img.png); }", css, bundle, tmp_path
+    )
     assert "http://example.com/img.png" in result
 
 
 def test_rewrite_css_urls_https_unchanged(tmp_path):
+    """Absolute HTTPS URLs inside url() are not rewritten."""
     css = tmp_path / "style.css"
     bundle = tmp_path / "bundle.css"
-    result = _rewrite_css_urls("body { background: url(https://cdn.com/img.png); }", css, bundle, tmp_path)
+    result = _rewrite_css_urls(
+        "body { background: url(https://cdn.com/img.png); }", css, bundle, tmp_path
+    )
     assert "https://cdn.com/img.png" in result
 
 
 def test_rewrite_css_urls_data_uri_unchanged(tmp_path):
+    """Data URIs inside url() are not rewritten."""
     css = tmp_path / "style.css"
     bundle = tmp_path / "bundle.css"
     content = "body { background: url(data:image/png;base64,abc123); }"
@@ -56,6 +66,7 @@ def test_rewrite_css_urls_data_uri_unchanged(tmp_path):
 
 
 def test_rewrite_css_urls_relative_is_rewritten(tmp_path):
+    """Relative url() references are rewritten relative to the bundle's location."""
     sub = tmp_path / "css"
     sub.mkdir()
     css = sub / "style.css"
@@ -70,9 +81,13 @@ def test_rewrite_css_urls_relative_is_rewritten(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_bundle_css_single_file_minifies_in_place(tmp_path):
+    """A single local CSS file is minified in place without creating a bundle."""
     (tmp_path / "style.css").write_text("body { color : red ; }")
     html = tmp_path / "index.html"
-    html.write_text('<html><head><link rel="stylesheet" href="style.css"></head><body></body></html>')
+    html.write_text(
+        '<html><head><link rel="stylesheet" href="style.css">'
+        '</head><body></body></html>'
+    )
     soup = BeautifulSoup(html.read_text(), "html.parser")
 
     result = _bundle_css(html, soup, tmp_path)
@@ -85,6 +100,7 @@ def test_bundle_css_single_file_minifies_in_place(tmp_path):
 
 
 def test_bundle_css_multiple_files_creates_bundle(tmp_path):
+    """Multiple local CSS files are merged into a single bundle file."""
     (tmp_path / "a.css").write_text("body { color: red; }")
     (tmp_path / "b.css").write_text("h1 { font-size: 2em; }")
     html = tmp_path / "index.html"
@@ -107,6 +123,7 @@ def test_bundle_css_multiple_files_creates_bundle(tmp_path):
 
 
 def test_bundle_css_external_stylesheet_skipped(tmp_path):
+    """External (CDN) stylesheets are not included in the bundle."""
     html = tmp_path / "index.html"
     html.write_text(
         '<html><head>'
@@ -120,6 +137,7 @@ def test_bundle_css_external_stylesheet_skipped(tmp_path):
 
 
 def test_bundle_css_no_stylesheets_returns_zero(tmp_path):
+    """An HTML file with no stylesheets returns a count of zero."""
     html = tmp_path / "index.html"
     html.write_text("<html><head></head><body></body></html>")
     soup = BeautifulSoup(html.read_text(), "html.parser")
@@ -133,6 +151,7 @@ def test_bundle_css_no_stylesheets_returns_zero(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_bundle_js_multiple_files_creates_bundle(tmp_path):
+    """Multiple local JS files are merged into a single bundle file."""
     (tmp_path / "a.js").write_text("var x = 1;")
     (tmp_path / "b.js").write_text("var y = 2;")
     html = tmp_path / "index.html"
@@ -152,9 +171,12 @@ def test_bundle_js_multiple_files_creates_bundle(tmp_path):
 
 
 def test_bundle_js_es_module_skipped(tmp_path):
+    """ES module scripts (type=module) are not bundled."""
     (tmp_path / "mod.js").write_text("export default {};")
     html = tmp_path / "index.html"
-    html.write_text('<html><body><script type="module" src="mod.js"></script></body></html>')
+    html.write_text(
+        '<html><body><script type="module" src="mod.js"></script></body></html>'
+    )
     soup = BeautifulSoup(html.read_text(), "html.parser")
 
     result = _bundle_js(html, soup, tmp_path)
@@ -162,8 +184,13 @@ def test_bundle_js_es_module_skipped(tmp_path):
 
 
 def test_bundle_js_external_script_skipped(tmp_path):
+    """External (CDN) scripts are not included in the bundle."""
     html = tmp_path / "index.html"
-    html.write_text('<html><body><script src="https://cdn.example.com/lib.js"></script></body></html>')
+    html.write_text(
+        '<html><body>'
+        '<script src="https://cdn.example.com/lib.js"></script>'
+        '</body></html>'
+    )
     soup = BeautifulSoup(html.read_text(), "html.parser")
 
     result = _bundle_js(html, soup, tmp_path)
@@ -175,6 +202,7 @@ def test_bundle_js_external_script_skipped(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_optimize_directory_html_is_minified_by_default(tmp_path):
+    """HTML is minified when compress_html is not explicitly disabled."""
     html = tmp_path / "index.html"
     raw = "<html>  <head>  </head>  <body>  <p>  hello  </p>  </body>  </html>"
     html.write_text(raw)
@@ -185,6 +213,7 @@ def test_optimize_directory_html_is_minified_by_default(tmp_path):
 
 
 def test_optimize_directory_no_compress_html_leaves_html_unchanged(tmp_path):
+    """HTML is not modified when compress_html=False."""
     html = tmp_path / "index.html"
     raw = "<html>  <head>  </head>  <body>  <p>  hello  </p>  </body>  </html>"
     html.write_text(raw)
@@ -195,6 +224,7 @@ def test_optimize_directory_no_compress_html_leaves_html_unchanged(tmp_path):
 
 
 def test_optimize_directory_no_bundle_css_creates_no_bundle(tmp_path):
+    """No CSS bundle is created when bundle_css=False."""
     (tmp_path / "a.css").write_text("body{color:red}")
     (tmp_path / "b.css").write_text("h1{font-size:2em}")
     html = tmp_path / "index.html"
@@ -211,6 +241,7 @@ def test_optimize_directory_no_bundle_css_creates_no_bundle(tmp_path):
 
 
 def test_optimize_directory_no_bundle_js_creates_no_bundle(tmp_path):
+    """No JS bundle is created when bundle_js=False."""
     (tmp_path / "a.js").write_text("var x=1;")
     (tmp_path / "b.js").write_text("var y=2;")
     html = tmp_path / "index.html"
@@ -227,6 +258,7 @@ def test_optimize_directory_no_bundle_js_creates_no_bundle(tmp_path):
 
 
 def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, monkeypatch):
+    """Font conversion is skipped when convert_fonts=False."""
     calls = []
     monkeypatch.setattr("optimize._convert_fonts", lambda root: calls.append(root) or 0)
 
@@ -236,6 +268,7 @@ def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, mon
 
 
 def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, monkeypatch):
+    """Image conversion is skipped when compress_images=False."""
     calls = []
     monkeypatch.setattr("optimize._convert_images", lambda root: calls.append(root) or 0)
 
@@ -245,6 +278,7 @@ def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, 
 
 
 def test_optimize_directory_convert_fonts_enabled_calls_converter(tmp_path, monkeypatch):
+    """Font converter is called exactly once when convert_fonts=True."""
     calls = []
     monkeypatch.setattr("optimize._convert_fonts", lambda root: calls.append(root) or 0)
 
@@ -258,6 +292,7 @@ def test_optimize_directory_convert_fonts_enabled_calls_converter(tmp_path, monk
 # ---------------------------------------------------------------------------
 
 def test_optimize_directory_stats_count_html_files(tmp_path):
+    """Stats correctly count the number of HTML files processed."""
     (tmp_path / "a.html").write_text("<html><body>page a</body></html>")
     (tmp_path / "b.html").write_text("<html><body>page b</body></html>")
 
@@ -269,6 +304,7 @@ def test_optimize_directory_stats_count_html_files(tmp_path):
 
 
 def test_optimize_directory_stats_count_css_files(tmp_path):
+    """Stats correctly count the number of CSS files bundled."""
     (tmp_path / "a.css").write_text("body{}")
     (tmp_path / "b.css").write_text("h1{}")
     html = tmp_path / "index.html"

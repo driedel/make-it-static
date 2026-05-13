@@ -315,7 +315,31 @@ def _bundle_js(html_path: Path, soup: BeautifulSoup, root: Path) -> int:
     return len(local)
 
 
-def optimize_directory(
+def _minify_remaining_css(root: Path) -> None:
+    """Minifies standalone CSS files that were not included in any bundle."""
+    for css_path in root.rglob("*.css"):
+        if css_path.name.startswith("bundle."):
+            continue
+        try:
+            content = css_path.read_text(encoding="utf-8", errors="ignore")
+            css_path.write_text(rcssmin.cssmin(content), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _minify_remaining_js(root: Path) -> None:
+    """Minifies standalone JS files that were not included in any bundle."""
+    for js_path in root.rglob("*.js"):
+        if js_path.name.startswith("bundle."):
+            continue
+        try:
+            content = js_path.read_text(encoding="utf-8", errors="ignore")
+            js_path.write_text(rjsmin.jsmin(content), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def optimize_directory(  # pylint: disable=too-many-arguments
     output_dir: str,
     bundle_css: bool = True,
     bundle_js: bool = True,
@@ -323,6 +347,7 @@ def optimize_directory(
     compress_html: bool = True,
     convert_fonts: bool = True,
 ) -> dict:
+    """Runs all optimizations (fonts, images, CSS/JS bundling, HTML minification)."""
     root = Path(output_dir)
     stats = {"html": 0, "css": 0, "js": 0, "fonts": 0, "images": 0}
 
@@ -352,31 +377,15 @@ def optimize_directory(
                 html_path.write_text(html_out, encoding="utf-8")
                 print(f"[optimize] {html_path.name}: {len(raw)} → {len(html_out)} bytes")
             elif bundle_css or bundle_js:
-                html_out = str(soup)
-                html_path.write_text(html_out, encoding="utf-8")
+                html_path.write_text(str(soup), encoding="utf-8")
             stats["html"] += 1
         except Exception as exc:
             print(f"[optimize] warning: {html_path}: {exc}", file=sys.stderr)
 
     if bundle_css:
-        for css_path in root.rglob("*.css"):
-            if css_path.name.startswith("bundle."):
-                continue
-            try:
-                content = css_path.read_text(encoding="utf-8", errors="ignore")
-                css_path.write_text(rcssmin.cssmin(content), encoding="utf-8")
-            except Exception:
-                pass
-
+        _minify_remaining_css(root)
     if bundle_js:
-        for js_path in root.rglob("*.js"):
-            if js_path.name.startswith("bundle."):
-                continue
-            try:
-                content = js_path.read_text(encoding="utf-8", errors="ignore")
-                js_path.write_text(rjsmin.jsmin(content), encoding="utf-8")
-            except Exception:
-                pass
+        _minify_remaining_js(root)
 
     return stats
 

@@ -1,3 +1,5 @@
+"""Tests for the FastAPI publish/jobs API — authentication, validation, and job lifecycle."""
+
 import hashlib
 import hmac
 import json
@@ -29,6 +31,7 @@ def _sign(payload: dict, ts_offset: int = 0, corrupt: bool = False):
 # ---------------------------------------------------------------------------
 
 def test_health_returns_ok():
+    """Health endpoint returns 200 with ok=True."""
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
@@ -39,11 +42,13 @@ def test_health_returns_ok():
 # ---------------------------------------------------------------------------
 
 def test_publish_no_signature_headers_returns_401():
+    """Request without signature headers is rejected with 401."""
     resp = client.post("/publish", content=b"{}", headers={"Content-Type": "application/json"})
     assert resp.status_code == 401
 
 
 def test_publish_bad_signature_returns_401():
+    """Request with a corrupted signature is rejected with 401."""
     payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time())}
     body, headers = _sign(payload, corrupt=True)
     resp = client.post("/publish", content=body, headers=headers)
@@ -51,6 +56,7 @@ def test_publish_bad_signature_returns_401():
 
 
 def test_publish_expired_timestamp_returns_401():
+    """Request with an expired timestamp is rejected with 401."""
     payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time())}
     body, headers = _sign(payload, ts_offset=-9999)
     resp = client.post("/publish", content=body, headers=headers)
@@ -62,6 +68,7 @@ def test_publish_expired_timestamp_returns_401():
 # ---------------------------------------------------------------------------
 
 def test_publish_missing_url_returns_400():
+    """Payload without 'url' field returns 400 with detail mentioning url."""
     body, headers = _sign({"post_id": 1, "ts": int(time.time())})
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
@@ -69,13 +76,18 @@ def test_publish_missing_url_returns_400():
 
 
 def test_publish_missing_post_id_returns_400():
+    """Payload without 'post_id' field returns 400."""
     body, headers = _sign({"url": "https://example.com/", "ts": int(time.time())})
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
 
 
 def test_publish_extra_cdn_not_list_returns_400():
-    payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time()), "extra_cdn": "notalist"}
+    """extra_cdn as a plain string (not a list) returns 400."""
+    payload = {
+        "url": "https://example.com/", "post_id": 1,
+        "ts": int(time.time()), "extra_cdn": "notalist",
+    }
     body, headers = _sign(payload)
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
@@ -83,14 +95,22 @@ def test_publish_extra_cdn_not_list_returns_400():
 
 
 def test_publish_extra_cdn_list_of_non_strings_returns_400():
-    payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time()), "extra_cdn": [1, 2]}
+    """extra_cdn containing non-string items returns 400."""
+    payload = {
+        "url": "https://example.com/", "post_id": 1,
+        "ts": int(time.time()), "extra_cdn": [1, 2],
+    }
     body, headers = _sign(payload)
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
 
 
 def test_publish_options_not_dict_returns_400():
-    payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time()), "options": "invalid"}
+    """options as a string (not a dict) returns 400."""
+    payload = {
+        "url": "https://example.com/", "post_id": 1,
+        "ts": int(time.time()), "options": "invalid",
+    }
     body, headers = _sign(payload)
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
@@ -98,7 +118,11 @@ def test_publish_options_not_dict_returns_400():
 
 
 def test_publish_options_as_list_returns_400():
-    payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time()), "options": [False]}
+    """options as a list (not a dict) returns 400."""
+    payload = {
+        "url": "https://example.com/", "post_id": 1,
+        "ts": int(time.time()), "options": [False],
+    }
     body, headers = _sign(payload)
     resp = client.post("/publish", content=body, headers=headers)
     assert resp.status_code == 400
@@ -116,6 +140,7 @@ def _mock_enqueue():
 
 
 def test_publish_minimal_payload_returns_job_id():
+    """A valid minimal payload returns 200 with job_id and status=queued."""
     _mock_enqueue()
     payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time())}
     body, headers = _sign(payload)
@@ -126,6 +151,7 @@ def test_publish_minimal_payload_returns_job_id():
 
 
 def test_publish_options_all_false_are_forwarded():
+    """All-false options dict is forwarded as-is to the enqueued job."""
     _mock_enqueue()
     payload = {
         "url": "https://example.com/",
@@ -151,6 +177,7 @@ def test_publish_options_all_false_are_forwarded():
 
 
 def test_publish_omitted_options_default_to_true():
+    """When options is omitted, all flags default to True."""
     _mock_enqueue()
     payload = {"url": "https://example.com/", "post_id": 1, "ts": int(time.time())}
     body, headers = _sign(payload)
@@ -165,6 +192,7 @@ def test_publish_omitted_options_default_to_true():
 
 
 def test_publish_partial_options_remaining_default_to_true():
+    """Flags not present in options default to True while specified ones are respected."""
     _mock_enqueue()
     payload = {
         "url": "https://example.com/",
@@ -186,12 +214,14 @@ def test_publish_partial_options_remaining_default_to_true():
 # ---------------------------------------------------------------------------
 
 def test_job_status_not_found_returns_404():
+    """Fetching status for a non-existent job returns 404."""
     with patch("main.Job.fetch", side_effect=Exception("not found")):
         resp = client.get("/jobs/nonexistent")
     assert resp.status_code == 404
 
 
 def test_job_status_returns_fields():
+    """A found job returns 200 with id and status fields."""
     mock_job = MagicMock()
     mock_job.id = "abc"
     mock_job.get_status.return_value = "finished"
@@ -213,12 +243,14 @@ def test_job_status_returns_fields():
 # ---------------------------------------------------------------------------
 
 def test_cancel_job_not_found_returns_404():
+    """Cancelling a non-existent job returns 404."""
     with patch("main.Job.fetch", side_effect=Exception("not found")):
         resp = client.delete("/jobs/nonexistent")
     assert resp.status_code == 404
 
 
 def test_cancel_queued_job_succeeds():
+    """A queued job can be cancelled and returns cancelled=True."""
     mock_job = MagicMock()
     mock_job.get_status.return_value = "queued"
     with patch("main.Job.fetch", return_value=mock_job):
@@ -229,6 +261,7 @@ def test_cancel_queued_job_succeeds():
 
 
 def test_cancel_started_job_succeeds():
+    """A started (running) job can be cancelled."""
     mock_job = MagicMock()
     mock_job.get_status.return_value = "started"
     with patch("main.Job.fetch", return_value=mock_job):
@@ -238,6 +271,7 @@ def test_cancel_started_job_succeeds():
 
 
 def test_cancel_finished_job_returns_409():
+    """Cancelling an already-finished job returns 409."""
     mock_job = MagicMock()
     mock_job.get_status.return_value = "finished"
     with patch("main.Job.fetch", return_value=mock_job):
@@ -246,6 +280,7 @@ def test_cancel_finished_job_returns_409():
 
 
 def test_cancel_failed_job_returns_409():
+    """Cancelling an already-failed job returns 409."""
     mock_job = MagicMock()
     mock_job.get_status.return_value = "failed"
     with patch("main.Job.fetch", return_value=mock_job):

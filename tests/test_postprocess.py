@@ -1,6 +1,4 @@
-import pathlib
-
-import pytest
+"""Tests for postprocess.py — URL rewriting, file normalization, and HTML absolutization."""
 
 from postprocess import (
     absolutize_html_urls,
@@ -15,27 +13,30 @@ from postprocess import (
 # ---------------------------------------------------------------------------
 
 def test_normalize_renames_file_with_query_string(tmp_path):
-    f = tmp_path / "style.css@ver=6.4.1"
-    f.write_text("body{}")
+    """File with query-string suffix is renamed to the clean name."""
+    source_file = tmp_path / "style.css@ver=6.4.1"
+    source_file.write_text("body{}")
 
     renames = normalize_query_string_files(tmp_path)
 
     assert (tmp_path / "style.css").exists()
-    assert not f.exists()
+    assert not source_file.exists()
     assert ("style.css@ver=6.4.1", "style.css") in renames
 
 
 def test_normalize_renames_js_file(tmp_path):
-    f = tmp_path / "app.js@ver=1.2&m=1"
-    f.write_text("var x=1;")
+    """JS file with multiple query params is renamed to the clean base name."""
+    source_file = tmp_path / "app.js@ver=1.2&m=1"
+    source_file.write_text("var x=1;")
 
-    renames = normalize_query_string_files(tmp_path)
+    normalize_query_string_files(tmp_path)
 
     assert (tmp_path / "app.js").exists()
-    assert not f.exists()
+    assert not source_file.exists()
 
 
 def test_normalize_duplicate_clean_name_discards_second(tmp_path):
+    """When two query-string variants map to the same clean name, the second is discarded."""
     (tmp_path / "style.css@ver=1").write_text("version 1")
     (tmp_path / "style.css@ver=2").write_text("version 2")
 
@@ -46,16 +47,18 @@ def test_normalize_duplicate_clean_name_discards_second(tmp_path):
 
 
 def test_normalize_ignores_clean_files(tmp_path):
-    f = tmp_path / "style.css"
-    f.write_text("body{}")
+    """Files without query-string suffixes are left untouched."""
+    source_file = tmp_path / "style.css"
+    source_file.write_text("body{}")
 
     normalize_query_string_files(tmp_path)
 
-    assert f.exists()
-    assert f.read_text() == "body{}"
+    assert source_file.exists()
+    assert source_file.read_text() == "body{}"
 
 
 def test_normalize_empty_directory_returns_empty_list(tmp_path):
+    """An empty directory produces no renames."""
     assert normalize_query_string_files(tmp_path) == []
 
 
@@ -64,6 +67,7 @@ def test_normalize_empty_directory_returns_empty_list(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_apply_renames_updates_href_in_html(tmp_path):
+    """href attribute with the old filename is rewritten to the new name."""
     html = tmp_path / "index.html"
     html.write_text('<link href="style.css@ver=6.4.1" rel="stylesheet">')
 
@@ -75,6 +79,7 @@ def test_apply_renames_updates_href_in_html(tmp_path):
 
 
 def test_apply_renames_updates_src_in_html(tmp_path):
+    """src attribute with the old filename is rewritten to the new name."""
     html = tmp_path / "index.html"
     html.write_text('<script src="app.js@ver=2.0"></script>')
 
@@ -95,6 +100,7 @@ def test_apply_renames_also_replaces_query_string_form(tmp_path):
 
 
 def test_apply_renames_empty_list_is_noop(tmp_path):
+    """An empty renames list leaves all files unchanged."""
     html = tmp_path / "index.html"
     original = "<p>unchanged</p>"
     html.write_text(original)
@@ -109,6 +115,7 @@ def test_apply_renames_empty_list_is_noop(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_build_patterns_strips_http_origin_host():
+    """HTTP origin host prefix is removed from href attributes."""
     patterns = build_patterns("staging.example.com")
     text = 'href="http://staging.example.com/page/"'
     for pat, repl in patterns:
@@ -118,6 +125,7 @@ def test_build_patterns_strips_http_origin_host():
 
 
 def test_build_patterns_strips_https_origin_host():
+    """HTTPS origin host prefix is removed from src attributes."""
     patterns = build_patterns("staging.example.com")
     text = 'src="https://staging.example.com/assets/img.png"'
     for pat, repl in patterns:
@@ -126,6 +134,7 @@ def test_build_patterns_strips_https_origin_host():
 
 
 def test_build_patterns_strips_extra_cdn():
+    """Extra CDN host prefix is removed from src attributes."""
     patterns = build_patterns("origin.com", ["cdn.example.com"])
     text = 'src="https://cdn.example.com/assets/font.woff2"'
     for pat, repl in patterns:
@@ -134,6 +143,7 @@ def test_build_patterns_strips_extra_cdn():
 
 
 def test_build_patterns_removes_wp_generator_meta():
+    """WordPress generator meta tag is stripped."""
     patterns = build_patterns("example.com")
     text = '<meta name="generator" content="WordPress 6.4">'
     for pat, repl in patterns:
@@ -142,6 +152,7 @@ def test_build_patterns_removes_wp_generator_meta():
 
 
 def test_build_patterns_removes_wp_emoji_script():
+    """WordPress emoji inline script block is stripped."""
     patterns = build_patterns("example.com")
     text = '<script type="text/javascript">\nwindow._wpemojiSettings = {};\n</script>'
     for pat, repl in patterns:
@@ -150,6 +161,7 @@ def test_build_patterns_removes_wp_emoji_script():
 
 
 def test_build_patterns_removes_pingback_link():
+    """XML-RPC pingback link tag is stripped."""
     patterns = build_patterns("example.com")
     text = '<link rel="pingback" href="https://example.com/xmlrpc.php">'
     for pat, repl in patterns:
@@ -162,6 +174,7 @@ def test_build_patterns_removes_pingback_link():
 # ---------------------------------------------------------------------------
 
 def test_absolutize_relative_href_becomes_absolute(tmp_path):
+    """A relative href at root level is prefixed with /."""
     html_path = tmp_path / "index.html"
     html_path.touch()
     text = absolutize_html_urls('<a href="page.html">link</a>', html_path, tmp_path)
@@ -169,6 +182,7 @@ def test_absolutize_relative_href_becomes_absolute(tmp_path):
 
 
 def test_absolutize_relative_href_from_subdir(tmp_path):
+    """A relative href using ../ traversal is resolved to an absolute path."""
     html_path = tmp_path / "blog" / "post" / "index.html"
     html_path.parent.mkdir(parents=True)
     html_path.touch()
@@ -177,6 +191,7 @@ def test_absolutize_relative_href_from_subdir(tmp_path):
 
 
 def test_absolutize_absolute_href_unchanged(tmp_path):
+    """An already-absolute href is left unchanged."""
     html_path = tmp_path / "index.html"
     html_path.touch()
     text = absolutize_html_urls('<a href="/already/absolute">link</a>', html_path, tmp_path)
@@ -184,21 +199,28 @@ def test_absolutize_absolute_href_unchanged(tmp_path):
 
 
 def test_absolutize_external_href_unchanged(tmp_path):
+    """An external (https://) href is not modified."""
     html_path = tmp_path / "index.html"
     html_path.touch()
-    text = absolutize_html_urls('<a href="https://external.com/page">link</a>', html_path, tmp_path)
+    text = absolutize_html_urls(
+        '<a href="https://external.com/page">link</a>', html_path, tmp_path
+    )
     assert 'href="https://external.com/page"' in text
 
 
 def test_absolutize_strips_index_html_from_internal_links(tmp_path):
+    """Internal links ending in /index.html are rewritten to the directory path."""
     html_path = tmp_path / "index.html"
     html_path.touch()
-    text = absolutize_html_urls('<a href="/blog/post/index.html">link</a>', html_path, tmp_path)
+    text = absolutize_html_urls(
+        '<a href="/blog/post/index.html">link</a>', html_path, tmp_path
+    )
     assert "index.html" not in text
     assert "/blog/post/" in text
 
 
 def test_absolutize_srcset_entries_resolved(tmp_path):
+    """All srcset entries are resolved to absolute paths."""
     html_path = tmp_path / "index.html"
     html_path.touch()
     text = absolutize_html_urls(
@@ -211,9 +233,12 @@ def test_absolutize_srcset_entries_resolved(tmp_path):
 
 
 def test_absolutize_data_href_unchanged(tmp_path):
+    """A data: URI in src is not modified."""
     html_path = tmp_path / "index.html"
     html_path.touch()
-    text = absolutize_html_urls('<img src="data:image/png;base64,abc">', html_path, tmp_path)
+    text = absolutize_html_urls(
+        '<img src="data:image/png;base64,abc">', html_path, tmp_path
+    )
     assert "data:image/png;base64,abc" in text
 
 
