@@ -46,6 +46,40 @@ def test_normalize_duplicate_clean_name_discards_second(tmp_path):
     assert list(tmp_path.glob("style.css@*")) == []
 
 
+def test_normalize_renames_version_only_query_string(tmp_path):
+    """wget converts eicons.eot?5.34.0 → eicons.eot@5.34.0 (no = sign)."""
+    f = tmp_path / "eicons.eot@5.34.0"
+    f.write_bytes(b"\x00")
+
+    renames = normalize_query_string_files(tmp_path)
+
+    assert (tmp_path / "eicons.eot").exists()
+    assert not f.exists()
+    assert ("eicons.eot@5.34.0", "eicons.eot") in renames
+
+
+def test_normalize_renames_v_prefixed_version(tmp_path):
+    """wget converts fontawesome.woff2?v4.7.0 → fontawesome.woff2@v4.7.0."""
+    f = tmp_path / "fontawesome.woff2@v4.7.0"
+    f.write_bytes(b"\x00")
+
+    renames = normalize_query_string_files(tmp_path)
+
+    assert (tmp_path / "fontawesome.woff2").exists()
+    assert not f.exists()
+
+
+def test_normalize_ignores_retina_images(tmp_path):
+    """logo@2x.png is a retina image name, NOT a query-string file — must not be renamed."""
+    f = tmp_path / "logo@2x.png"
+    f.write_bytes(b"\x00")
+
+    renames = normalize_query_string_files(tmp_path)
+
+    assert f.exists()
+    assert renames == []
+
+
 def test_normalize_ignores_clean_files(tmp_path):
     """Files without query-string suffixes are left untouched."""
     source_file = tmp_path / "style.css"
@@ -86,6 +120,18 @@ def test_apply_renames_updates_src_in_html(tmp_path):
     apply_renames_to_text_files(tmp_path, [("app.js@ver=2.0", "app.js")])
 
     assert "app.js@ver=2.0" not in html.read_text()
+
+
+def test_apply_renames_version_query_string_in_css(tmp_path):
+    """CSS url() with ?5.34.0#iefix (no --convert-links) is fixed to clean name."""
+    css = tmp_path / "all.css"
+    css.write_text("src: url('eicons.eot?5.34.0#iefix') format('embedded-opentype');")
+
+    apply_renames_to_text_files(tmp_path, [("eicons.eot@5.34.0", "eicons.eot")])
+
+    result = css.read_text()
+    assert "eicons.eot?5.34.0" not in result
+    assert "eicons.eot#iefix" in result
 
 
 def test_apply_renames_also_replaces_query_string_form(tmp_path):

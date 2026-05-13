@@ -14,8 +14,10 @@ import re
 import sys
 from urllib.parse import urljoin
 
-# @ preceded by a file extension and followed by param=value → came from ?querystring
-_QUERY_AT = re.compile(r"@[^@=]*=")
+# @ in filename came from wget replacing ? in query strings (--restrict-file-names=windows).
+# Two forms:  @key=value  (e.g. style.css@ver=6.4.1)
+#             @version    (e.g. eicons.eot@5.34.0 or fontawesome@v4.7.0)
+_QUERY_AT = re.compile(r"@[^@=\s]*=|@v?\d[\d.]+")
 
 
 def normalize_query_string_files(output_dir: pathlib.Path) -> list[tuple[str, str]]:
