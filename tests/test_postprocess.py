@@ -188,6 +188,32 @@ def test_build_patterns_strips_extra_cdn():
     assert "cdn.example.com" not in text
 
 
+def test_build_patterns_strips_origin_host_in_css_url(tmp_path):
+    """CSS url() with absolute origin URLs must have the domain stripped."""
+    css = tmp_path / "bundle.css"
+    css.write_text(
+        'src: url("https://lp.example.com/wp-content/uploads/font.woff2") format("woff2");'
+    )
+    patterns = build_patterns("lp.example.com")
+    text = css.read_text()
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    css.write_text(text)
+    result = css.read_text()
+    assert "lp.example.com" not in result
+    assert "/wp-content/uploads/font.woff2" in result
+
+
+def test_build_patterns_strips_json_escaped_origin_host():
+    """WordPress embeds URLs as \"https:\\/\\/host\\/path\" in inline JS config blocks."""
+    patterns = build_patterns("lp.example.com")
+    text = r'"ajaxurl":"https:\/\/lp.example.com\/wp-admin\/admin-ajax.php"'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "lp.example.com" not in text
+    assert r"\/wp-admin\/admin-ajax.php" in text
+
+
 def test_build_patterns_removes_wp_generator_meta():
     """WordPress generator meta tag is stripped."""
     patterns = build_patterns("example.com")

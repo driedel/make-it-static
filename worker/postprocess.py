@@ -84,8 +84,10 @@ def apply_renames_to_text_files(output_dir: pathlib.Path, renames: list[tuple[st
 
 def build_patterns(origin_host: str, extra_hosts: list[str] | None = None):
     host_patterns = [
-        # any http/https://<host> → relative URL (origin + extra CDNs)
-        (re.compile(rf"https?://{re.escape(h)}"), "")
+        # any http/https://<host> → relative URL (origin + extra CDNs).
+        # Matches both the plain form (href="https://host/...") and the JSON-escaped form
+        # ("url":"https:\/\/host\/...") that WordPress embeds in inline JS config blocks.
+        (re.compile(rf"https?:\\?/\\?/{re.escape(h)}"), "")
         for h in [origin_host] + (extra_hosts or [])
     ]
     return host_patterns + [
@@ -196,7 +198,7 @@ def main():
         for old, new in renames:
             print(f"[postprocess]   {old} → {new}")
 
-    # Step 2: strip absolute URLs and CMS artifacts from HTML files
+    # Step 2: strip absolute URLs and CMS artifacts from HTML and CSS files
     patterns = build_patterns(origin_host, extra_hosts)
     count = 0
 
@@ -216,6 +218,25 @@ def main():
             html.write_text(text, encoding="utf-8")
             count += 1
             print(f"[postprocess] cleaned: {html}")
+
+    # CSS files: strip origin/CDN domain URLs (e.g. url("https://origin/...") in @font-face,
+    # background-image, etc.). HTML-specific WordPress patterns are harmless on CSS — they
+    # won't match — so we reuse the same patterns list for simplicity.
+    for css in output_dir.rglob("*.css"):
+        try:
+            text = css.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            print(f"[postprocess] error reading {css}: {e}", file=sys.stderr)
+            continue
+
+        original = text
+        for pat, repl in patterns:
+            text = pat.sub(repl, text)
+
+        if text != original:
+            css.write_text(text, encoding="utf-8")
+            count += 1
+            print(f"[postprocess] cleaned: {css}")
 
     print(f"[postprocess] {count} file(s) modified")
 

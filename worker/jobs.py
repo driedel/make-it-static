@@ -114,6 +114,134 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
     return downloaded
 
 
+# Matches chunk filenames with a content hash (16+ hex chars), e.g.:
+#   toggle.5a98241a5a40d37968b0.bundle.min.js
+#   tabs.3919f4174431c122f3d8.bundle.min.js
+_CHUNK_FILENAME = re.compile(r'"([a-zA-Z0-9._-]+\.[a-f0-9]{16,}[^"]*\.js)"')
+
+# Matches Elementor AssetsLoader asset paths in frontend.min.js template literals, e.g.:
+#   lib/dialog/dialog${o}.js?ver=4.9.3  →  ('dialog/dialog', '4.9.3')
+#   lib/swiper/v8/swiper${o}.js?ver=8.4.5  →  ('swiper/v8/swiper', '8.4.5')
+_ELEMENTOR_ASSET = re.compile(
+    r'lib/([a-zA-Z0-9/_.-]+?)(?:\$\{[^}]+\})?\.(?:js|css)\?ver=([\d.]+)'
+)
+
+
+def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
+    """
+    Downloads webpack lazy-loaded chunks that wget misses.
+
+    webpack splits code into chunks that are loaded at runtime, not referenced in
+    HTML attributes. The runtime JS (webpack.runtime.min.js) contains a chunk map
+    (chunk-id → filename). Since the webpack public path is auto-computed from the
+    script's own URL, each chunk lives in the same directory as its runtime file.
+
+    This function scans every downloaded JS file that looks like a webpack runtime,
+    extracts hashed chunk filenames, and downloads any missing ones from the origin.
+    Must be called BEFORE postprocess so the files are present for S3 upload.
+    """
+    parsed = urlparse(origin_url)
+    base_origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    seen: set[str] = set()
+    downloaded = 0
+
+    for js_file in workdir.rglob("*.js"):
+        try:
+            text = js_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+
+        if "__webpack_require__" not in text and "webpackJsonp" not in text:
+            continue
+
+        js_dir = js_file.parent.relative_to(workdir)
+
+        for m in _CHUNK_FILENAME.finditer(text):
+            chunk_name = m.group(1)
+            local_path = js_file.parent / chunk_name
+            chunk_url = f"{base_origin}/{js_dir}/{chunk_name}"
+
+            if chunk_url in seen or local_path.exists():
+                seen.add(chunk_url)
+                continue
+            seen.add(chunk_url)
+
+            result = subprocess.run(
+                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), chunk_url],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                print(f"[job] webpack chunk downloaded: {chunk_url}")
+                downloaded += 1
+            else:
+                print(f"[job] warning: failed to download webpack chunk {chunk_url}")
+                local_path.unlink(missing_ok=True)
+
+    return downloaded
+
+
+def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) -> int:
+    """
+    Downloads Elementor AssetsLoader scripts/styles not referenced in HTML attributes.
+
+    Elementor's AssetsLoader (in frontend.min.js) builds asset URLs at runtime from
+    elementorFrontendConfig.urls.assets + a relative lib/ path. Because the full URL
+    is never a literal string anywhere, wget misses these files entirely.
+
+    Strategy: scan every downloaded frontend.min.js for AssetsLoader lib/ patterns,
+    reconstruct the origin URL, and download missing files to the same assets directory.
+    The file is saved with the clean name (no ?ver= query) since S3/CloudFront strips
+    query strings when looking up objects.
+    """
+    parsed = urlparse(origin_url)
+    base_origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    seen: set[str] = set()
+    downloaded = 0
+
+    for js_file in workdir.rglob("frontend.min.js"):
+        # Elementor's frontend.min.js lives inside an assets/js/ directory
+        if js_file.parent.name != "js":
+            continue
+
+        try:
+            text = js_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+
+        if "AssetsLoader" not in text:
+            continue
+
+        assets_dir = js_file.parent.parent.relative_to(workdir)
+
+        for m in _ELEMENTOR_ASSET.finditer(text):
+            rel_stem, version = m.group(1), m.group(2)
+            ext = ".js" if ".js" in m.group(0) else ".css"
+            asset_rel = f"lib/{rel_stem}.min{ext}"
+            local_path = workdir / assets_dir / asset_rel
+            asset_url = f"{base_origin}/{assets_dir}/{asset_rel}?ver={version}"
+
+            if asset_url in seen or local_path.exists():
+                seen.add(asset_url)
+                continue
+            seen.add(asset_url)
+
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), asset_url],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                print(f"[job] Elementor asset downloaded: {asset_url}")
+                downloaded += 1
+            else:
+                print(f"[job] warning: failed to download Elementor asset {asset_url}")
+                local_path.unlink(missing_ok=True)
+
+    return downloaded
+
+
 def _build_opt_cmd(workdir: pathlib.Path, opts: dict) -> list[str]:
     """Builds the optimize.py subprocess command from the options dict."""
     cmd = ["python", "/app/optimize.py", str(workdir)]
@@ -178,6 +306,17 @@ def deploy_page(
         postprocess = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
         if postprocess.returncode != 0:
             print("[job] warning: postprocess failed, continuing anyway", flush=True)
+
+        # 2b. webpack lazy-loaded chunks — runs after postprocess so that webpack runtime
+        #     files have been renamed (e.g. webpack.runtime.min.js@ver=3.26.3 → .min.js)
+        #     and are found by the *.js glob used to detect chunk maps.
+        wc = download_webpack_chunks(workdir, url)
+        print(f"[job] {wc} webpack chunk(s) downloaded", flush=True)
+
+        # 2c. Elementor AssetsLoader assets (dialog.js, swiper.js, …) — loaded at runtime
+        #     via template literals; never appear as literal src= attributes in HTML.
+        ea = download_elementor_dynamic_assets(workdir, url)
+        print(f"[job] {ea} Elementor dynamic asset(s) downloaded", flush=True)
 
         # 3. optimization (CSS/JS bundle + minification)
         print("[job] step 3/4: optimizing assets", flush=True)
