@@ -26,7 +26,7 @@ from bs4 import BeautifulSoup
 
 
 def _file_hash(content: str) -> str:
-    return hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
 def _rewrite_css_urls(css_content: str, css_path: Path, bundle_path: Path, root: Path) -> str:

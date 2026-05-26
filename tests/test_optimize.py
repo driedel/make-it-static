@@ -25,9 +25,9 @@ def test_file_hash_differs_for_different_input():
     assert _file_hash("a") != _file_hash("b")
 
 
-def test_file_hash_length_is_eight():
-    """Hash is always 8 characters long."""
-    assert len(_file_hash("anything")) == 8
+def test_file_hash_length_is_sixteen():
+    """Hash is always 16 characters long (SHA-256 truncated)."""
+    assert len(_file_hash("anything")) == 16
 
 
 # ---------------------------------------------------------------------------

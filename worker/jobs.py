@@ -9,7 +9,8 @@ import re
 import shutil
 import subprocess
 import threading
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from deploy import invalidate_cloudfront, sync_to_s3
@@ -45,6 +46,17 @@ def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProc
 
 WORK_ROOT = pathlib.Path("/tmp/deploys")
 WORK_ROOT.mkdir(exist_ok=True)
+
+
+def _safe_path(workdir: pathlib.Path, *parts: str) -> pathlib.Path | None:
+    """Joins path parts and ensures the resolved result stays within workdir."""
+    target = workdir.joinpath(*parts).resolve()
+    workdir_resolved = workdir.resolve()
+    try:
+        target.relative_to(workdir_resolved)
+        return target
+    except ValueError:
+        return None
 
 
 def url_to_prefix(url: str) -> str:
@@ -95,8 +107,8 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
                 continue
             seen.add(full_url)
 
-            local_path = workdir / url_path.lstrip("/")
-            if local_path.exists():
+            local_path = _safe_path(workdir, url_path.lstrip("/"))
+            if local_path is None or local_path.exists():
                 continue
 
             local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,13 +174,17 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
             local_path = js_file.parent / chunk_name
             chunk_url = f"{base_origin}/{js_dir}/{chunk_name}"
 
-            if chunk_url in seen or local_path.exists():
+            safe_local = _safe_path(workdir, local_path.relative_to(workdir))
+            if safe_local is None:
+                continue
+
+            if chunk_url in seen or safe_local.exists():
                 seen.add(chunk_url)
                 continue
             seen.add(chunk_url)
 
             result = subprocess.run(
-                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), chunk_url],
+                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(safe_local), chunk_url],
                 capture_output=True,
             )
             if result.returncode == 0:
@@ -219,8 +235,11 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
             rel_stem, version = m.group(1), m.group(2)
             ext = ".js" if ".js" in m.group(0) else ".css"
             asset_rel = f"lib/{rel_stem}.min{ext}"
-            local_path = workdir / assets_dir / asset_rel
+            local_path = _safe_path(workdir, assets_dir, asset_rel)
             asset_url = f"{base_origin}/{assets_dir}/{asset_rel}?ver={version}"
+
+            if local_path is None:
+                continue
 
             if asset_url in seen or local_path.exists():
                 seen.add(asset_url)
@@ -272,8 +291,8 @@ def deploy_page(
     falls back to CLOUDFRONT_DISTRIBUTION_ID env var if absent).
     extra_cdn: additional domains to include in the download (CDNs present in the HTML).
     """
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    workdir = WORK_ROOT / f"{post_id}-{timestamp}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    workdir = WORK_ROOT / f"{post_id}-{timestamp}-{uuid.uuid4().hex[:8]}"
     workdir.mkdir(parents=True)
 
     extra_cdn = extra_cdn or []
