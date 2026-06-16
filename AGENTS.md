@@ -17,12 +17,22 @@ docker compose up --build
 # Start prod (no MinIO)
 docker compose -f docker-compose.prod.yml up -d --build
 
-# Run tests inside the worker container
-docker compose exec worker pytest tests/ -v --cov=api --cov=worker
+# Run tests inside a temporary container (worker image does not include api/ or tests/)
+docker run --rm \
+  -v "$(pwd)/api:/app/api" \
+  -v "$(pwd)/worker:/app/worker" \
+  -v "$(pwd)/tests:/app/tests" \
+  -w /app \
+  make-it-static-worker \
+  bash -c "pip install --quiet -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt && pytest tests/ -v --cov=api --cov=worker"
 
-# Run security scans inside the worker container
-docker compose exec worker bandit -r api worker
-docker compose exec worker pip-audit -r api/requirements.txt -r worker/requirements.txt
+# Run security scans inside a temporary container
+docker run --rm \
+  -v "$(pwd)/api:/app/api" \
+  -v "$(pwd)/worker:/app/worker" \
+  -w /app \
+  make-it-static-worker \
+  bash -c "pip install --quiet bandit pip-audit && bandit -r api worker && pip-audit -r api/requirements.txt -r worker/requirements.txt"
 
 # Follow worker logs
 docker compose logs -f worker
