@@ -5,6 +5,11 @@
 .venv*
 venv/
 
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Security scan reports
 bandit-report.txt
 pip-audit-*.json
