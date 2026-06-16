@@ -82,6 +82,23 @@ def test_publish_missing_post_id_returns_400():
     assert resp.status_code == 400
 
 
+def test_publish_file_url_returns_400():
+    """file:// URLs are rejected to prevent local file access."""
+    body, headers = _sign({"url": "file:///etc/passwd", "post_id": 1, "ts": int(time.time())})
+    resp = client.post("/publish", content=body, headers=headers)
+    assert resp.status_code == 400
+    assert "http or https" in resp.json()["detail"]
+
+
+def test_publish_internal_ip_returns_400():
+    """URLs pointing to internal IP addresses are rejected (SSRF mitigation)."""
+    for ip in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "192.168.1.1"):
+        body, headers = _sign({"url": f"http://{ip}/", "post_id": 1, "ts": int(time.time())})
+        resp = client.post("/publish", content=body, headers=headers)
+        assert resp.status_code == 400, f"expected 400 for {ip}, got {resp.status_code}"
+        assert "internal IP" in resp.json()["detail"]
+
+
 def test_publish_extra_cdn_not_list_returns_400():
     """extra_cdn as a plain string (not a list) returns 400."""
     payload = {

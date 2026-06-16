@@ -8,9 +8,11 @@ Make it Static — API
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import time
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,13 +25,34 @@ SECRET = os.environ["HMAC_SECRET"].encode()
 MAX_SKEW = int(os.environ.get("HMAC_MAX_SKEW", "300"))
 REDIS_URL = os.environ["REDIS_URL"]
 
+# --- URL validation ---
+
+def _validate_url(url: str) -> None:
+    """Rejects non-http(s) URLs and internal IP addresses to prevent SSRF."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="url must be http or https")
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="url must have a valid hostname")
+
+    # Reject literal internal IP addresses
+    try:
+        addr = ipaddress.ip_address(parsed.hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise HTTPException(status_code=400, detail="url must not use internal IP addresses")
+    except ValueError:
+        pass  # It's a domain name, not an IP literal
+
+
 # --- Infra ---
 app = FastAPI(title="Make it Static API", version="1.0.0")
 
-# CORS open for dev simplicity — restrict to your client domain(s) in prod.
+# CORS: configure allowed origins via CORS_ORIGINS env var (comma-separated).
+# Defaults to "*" for dev. Restrict in production.
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],
 )
@@ -82,6 +105,8 @@ async def publish(req: Request):
     post_id = payload.get("post_id")
     if not url or not post_id:
         raise HTTPException(status_code=400, detail="url and post_id required")
+
+    _validate_url(url)
 
     # cloudfront_distribution_id is optional: each site can send its own.
     # Falls back to CLOUDFRONT_DISTRIBUTION_ID env var in the worker if absent.
@@ -149,7 +174,7 @@ def job_status(job_id: str):
         "id": job.id,
         "status": job.get_status(),
         "result": job.result,
-        "error": str(job.exc_info) if job.exc_info else None,
+        "error": "Job failed — check server logs" if job.exc_info else None,
         "enqueued_at": job.enqueued_at.isoformat() if job.enqueued_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "ended_at": job.ended_at.isoformat() if job.ended_at else None,
