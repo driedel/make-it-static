@@ -85,8 +85,8 @@ def _update_refs(
                 new_text = pattern.sub(new_name, text)
                 if new_text != text:
                     fpath.write_text(new_text, encoding="utf-8")
-            except Exception:
-                pass
+            except OSError as exc:
+                print(f"[optimize] warning: could not update refs in {fpath}: {exc}", file=sys.stderr)
 
 
 def _convert_fonts(root: Path) -> int:
@@ -124,8 +124,8 @@ def _convert_fonts(root: Path) -> int:
                         fixed = fmt_hint.sub("format('woff2')", css)
                         if fixed != css:
                             css_path.write_text(fixed, encoding="utf-8")
-                    except Exception:
-                        pass
+                    except OSError as exc:
+                        print(f"[optimize] warning: could not update format hint in {css_path}: {exc}", file=sys.stderr)
 
                 converted += 1
                 print(f"[optimize] font: {old_name} → {new_name}")
@@ -323,8 +323,8 @@ def _minify_remaining_css(root: Path) -> None:
         try:
             content = css_path.read_text(encoding="utf-8", errors="ignore")
             css_path.write_text(rcssmin.cssmin(content), encoding="utf-8")
-        except Exception:
-            pass
+        except OSError as exc:
+            print(f"[optimize] warning: could not minify {css_path}: {exc}", file=sys.stderr)
 
 
 def _minify_remaining_js(root: Path) -> None:
@@ -335,8 +335,8 @@ def _minify_remaining_js(root: Path) -> None:
         try:
             content = js_path.read_text(encoding="utf-8", errors="ignore")
             js_path.write_text(rjsmin.jsmin(content), encoding="utf-8")
-        except Exception:
-            pass
+        except OSError as exc:
+            print(f"[optimize] warning: could not minify {js_path}: {exc}", file=sys.stderr)
 
 
 def optimize_directory(  # pylint: disable=too-many-arguments

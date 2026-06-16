@@ -7,7 +7,8 @@ import os
 import pathlib
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 — required to run wget and helper scripts; never uses shell=True
+import sys
 import tempfile
 import threading
 import uuid
@@ -19,7 +20,7 @@ from deploy import invalidate_cloudfront, sync_to_s3
 
 def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
     """Run a command, streaming stdout+stderr to the console line by line."""
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603 — runs pre-defined commands with argv list, no shell
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -101,7 +102,8 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
     for html_file in workdir.rglob("*.html"):
         try:
             text = html_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError as exc:
+            print(f"[job] warning: could not read {html_file}: {exc}", file=sys.stderr)
             continue
 
         for m in url_re.finditer(text):
@@ -115,8 +117,8 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
                 continue
 
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(
-                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), full_url],
+            result = subprocess.run(  # nosec B603 — argv list, no shell; URL validated by caller
+                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), full_url],
                 capture_output=True,
             )
             if result.returncode == 0:
@@ -164,7 +166,8 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
     for js_file in workdir.rglob("*.js"):
         try:
             text = js_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError as exc:
+            print(f"[job] warning: could not read {js_file}: {exc}", file=sys.stderr)
             continue
 
         if "__webpack_require__" not in text and "webpackJsonp" not in text:
@@ -186,8 +189,8 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
                 continue
             seen.add(chunk_url)
 
-            result = subprocess.run(
-                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(safe_local), chunk_url],
+            result = subprocess.run(  # nosec B603 — argv list, no shell; path validated via _safe_path
+                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(safe_local), chunk_url],
                 capture_output=True,
             )
             if result.returncode == 0:
@@ -226,7 +229,8 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
 
         try:
             text = js_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError as exc:
+            print(f"[job] warning: could not read {js_file}: {exc}", file=sys.stderr)
             continue
 
         if "AssetsLoader" not in text:
@@ -250,8 +254,8 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
             seen.add(asset_url)
 
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(
-                ["wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), asset_url],
+            result = subprocess.run(  # nosec B603 — argv list, no shell; path validated via _safe_path
+                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), asset_url],
                 capture_output=True,
             )
             if result.returncode == 0:

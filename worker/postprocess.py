@@ -67,7 +67,8 @@ def apply_renames_to_text_files(output_dir: pathlib.Path, renames: list[tuple[st
             continue
         try:
             text = text_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError as exc:
+            print(f"[postprocess] warning: could not read {text_file}: {exc}", file=sys.stderr)
             continue
 
         modified = text
