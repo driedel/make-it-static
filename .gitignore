@@ -15,3 +15,4 @@ bandit-report.txt
 pip-audit-*.json
 safety-report.json
 *.sarif
+SECURITY_AUDIT.md
