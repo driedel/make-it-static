@@ -8,6 +8,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -44,8 +45,10 @@ def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProc
     return subprocess.CompletedProcess(cmd, proc.returncode, "\n".join(lines), "")
 
 
-WORK_ROOT = pathlib.Path("/tmp/deploys")
-WORK_ROOT.mkdir(exist_ok=True)
+def _make_workdir(post_id: int) -> pathlib.Path:
+    """Creates a unique temporary directory for a deploy job."""
+    prefix = f"deploy-{post_id}-"
+    return pathlib.Path(tempfile.mkdtemp(prefix=prefix))
 
 
 def _safe_path(workdir: pathlib.Path, *parts: str) -> pathlib.Path | None:
@@ -292,8 +295,8 @@ def deploy_page(
     extra_cdn: additional domains to include in the download (CDNs present in the HTML).
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    workdir = WORK_ROOT / f"{post_id}-{timestamp}-{uuid.uuid4().hex[:8]}"
-    workdir.mkdir(parents=True)
+    workdir = _make_workdir(post_id)
+    workdir.mkdir(parents=True, exist_ok=True)
 
     extra_cdn = extra_cdn or []
     opts = options or {}
