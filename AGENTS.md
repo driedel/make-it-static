@@ -4,6 +4,8 @@ This file is written for AI coding agents. It assumes no prior knowledge of the 
 
 ## Developer commands
 
+> **Rule**: all tests and security scans must run inside Docker containers. Never run the test suite or install project dependencies directly on the host machine.
+
 ```bash
 # First-time setup
 docker network create make-it-static-network   # REQUIRED — compose won't create it
@@ -15,9 +17,12 @@ docker compose up --build
 # Start prod (no MinIO)
 docker compose -f docker-compose.prod.yml up -d --build
 
-# Run tests
-pip install -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt
-pytest tests/ -v --cov=api --cov=worker
+# Run tests inside the worker container
+docker compose exec worker pytest tests/ -v --cov=api --cov=worker
+
+# Run security scans inside the worker container
+docker compose exec worker bandit -r api worker
+docker compose exec worker pip-audit -r api/requirements.txt -r worker/requirements.txt
 
 # Follow worker logs
 docker compose logs -f worker
@@ -176,17 +181,19 @@ Production `.env` requirements:
 
 ## Testing
 
-The project uses **pytest**. The CI workflow installs dependencies from all three `requirements.txt` files and runs:
+> **Rule**: all tests must run inside Docker. Do not install dependencies or run `pytest` on the host machine.
+
+The project uses **pytest**. Inside the worker container, run:
 
 ```bash
-pytest tests/ -v \
+docker compose exec worker pytest tests/ -v \
   --cov=api \
   --cov=worker \
   --cov-report=term-missing \
   --cov-report=xml
 ```
 
-The tests mock Redis/RQ and do **not** require a running Redis or Docker stack. They cover:
+The tests mock Redis/RQ and do **not** require a running Redis or Docker stack for the unit tests. They cover:
 - HMAC authentication and payload validation (`test_api.py`)
 - Job lifecycle endpoints (`test_api.py`)
 - URL validation and SSRF mitigation (`test_api.py`)
@@ -196,20 +203,7 @@ The tests mock Redis/RQ and do **not** require a running Redis or Docker stack. 
 - Filename normalization, URL rewriting, and HTML absolutization (`test_postprocess.py`)
 - S3 upload, CloudFront invalidation, font/image conversion, and subprocess behavior (`test_integration.py`)
 
-### Running tests locally
-
-The project targets **Python 3.12**. If your default interpreter is newer (e.g. Python 3.14), dependency installation may fail because `htmlmin` imports the removed `cgi` module. Use Python 3.12 when running the test suite:
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r api/requirements.txt
-pip install -r worker/requirements.txt
-pip install -r tests/requirements.txt
-pytest tests/ -v
-```
-
-`tests/conftest.py` adds `api/` and `worker/` to `sys.path` and sets safe default values for `HMAC_SECRET`, `REDIS_URL`, and `S3_BUCKET`.
+The worker container uses **Python 3.12**, which is the target version for this project. Running tests inside Docker avoids host interpreter issues (for example, `htmlmin` relies on the `cgi` module, which was removed in Python 3.13+).
 
 ## Code style and conventions
 
