@@ -1,2 +1,12 @@
 .env
 .coverage
+
+# Virtual environments
+.venv*
+venv/
+
+# Security scan reports
+bandit-report.txt
+pip-audit-*.json
+safety-report.json
+*.sarif
