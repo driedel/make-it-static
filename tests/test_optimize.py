@@ -235,7 +235,7 @@ def test_optimize_directory_no_bundle_css_creates_no_bundle(tmp_path):
 
     optimize_directory(str(tmp_path), bundle_css=False, bundle_js=False, compress_html=False)
 
-    assert list(tmp_path.glob("bundle.*.css")) == []
+    assert not list(tmp_path.glob("bundle.*.css"))
 
 
 def test_optimize_directory_no_bundle_js_creates_no_bundle(tmp_path):
@@ -252,7 +252,7 @@ def test_optimize_directory_no_bundle_js_creates_no_bundle(tmp_path):
 
     optimize_directory(str(tmp_path), bundle_css=False, bundle_js=False, compress_html=False)
 
-    assert list(tmp_path.glob("bundle.*.js")) == []
+    assert not list(tmp_path.glob("bundle.*.js"))
 
 
 def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, monkeypatch):
@@ -262,7 +262,7 @@ def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, mon
 
     optimize_directory(str(tmp_path), convert_fonts=False)
 
-    assert calls == []
+    assert not calls
 
 
 def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, monkeypatch):
@@ -272,7 +272,7 @@ def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, 
 
     optimize_directory(str(tmp_path), compress_images=False)
 
-    assert calls == []
+    assert not calls
 
 
 def test_optimize_directory_convert_fonts_enabled_calls_converter(tmp_path, monkeypatch):

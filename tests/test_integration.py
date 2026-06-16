@@ -1,6 +1,6 @@
 """Integration tests — exercise real dependencies (Pillow, fontTools, boto3, subprocess)."""
 
-import subprocess
+import subprocess  # nosec B404
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -323,11 +323,11 @@ def test_safe_path_allows_normal_paths():
     from jobs import _safe_path
     import pathlib
 
-    workdir = pathlib.Path("/tmp/deploys/test")
+    workdir = pathlib.Path("/tmp/deploys/test")  # nosec B108
     result = _safe_path(workdir, "assets", "style.css")
     assert result is not None
     # macOS resolves /tmp to /private/tmp, so check suffix instead of exact match
-    assert str(result).endswith("/tmp/deploys/test/assets/style.css")
+    assert str(result).endswith("/tmp/deploys/test/assets/style.css")  # nosec B108
 
 
 def test_safe_path_blocks_traversal():
@@ -335,7 +335,7 @@ def test_safe_path_blocks_traversal():
     from jobs import _safe_path
     import pathlib
 
-    workdir = pathlib.Path("/tmp/deploys/test")
+    workdir = pathlib.Path("/tmp/deploys/test")  # nosec B108
     result = _safe_path(workdir, "../../etc/passwd")
     assert result is None
 
@@ -345,6 +345,6 @@ def test_safe_path_blocks_absolute_traversal():
     from jobs import _safe_path
     import pathlib
 
-    workdir = pathlib.Path("/tmp/deploys/test")
+    workdir = pathlib.Path("/tmp/deploys/test")  # nosec B108
     result = _safe_path(workdir, "/etc/passwd")
     assert result is None

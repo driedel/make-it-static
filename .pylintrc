@@ -1,0 +1,101 @@
+[MAIN]
+# Python version to target.
+py-version = 3.12
+
+# Ensure pylint can resolve api/ and worker/ imports the same way pytest does.
+init-hook = 'import sys; from pathlib import Path; sys.path.insert(0, str(Path(".").resolve() / "api")); sys.path.insert(0, str(Path(".").resolve() / "worker"))'
+
+# Use multiple processes to speed up Pylint. Specifying 0 will auto-detect the
+# number of processors available to use, and will cap on 4 to avoid I/O errors.
+jobs = 0
+
+# Control the amount of potential inferred values when inferring a single object.
+# This can help the performance when dealing with large functions or complex,
+# nested conditions.
+limit-inference-results = 100
+
+# Files or directories to be skipped. They should be base names, not paths.
+ignore = .git,__pycache__,.venv,venv
+
+[MESSAGES CONTROL]
+# Disable the message, report, category or checker with the given id(s).
+disable =
+    # Docstrings: the project does not require docstrings on every module/class/function.
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    # Naming conventions: too noisy for small scripts and pytest fixtures/helpers.
+    invalid-name,
+    # Style/formatting: handled by the project author, not by lint failures.
+    line-too-long,
+    # Imports inside functions are acceptable (e.g., lazy imports in tests/workers).
+    import-outside-toplevel,
+    # Many false positives with typed containers and optional types.
+    unsubscriptable-object,
+    # Similar/duplicate code is common in tests and worker scripts.
+    duplicate-code,
+    # Broad excepts are intentionally used at worker/job boundaries.
+    broad-except,
+    # Too-many-* rules are too strict for this small webhook/worker codebase.
+    too-many-locals,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-statements,
+    too-many-branches,
+    too-many-nested-blocks,
+    too-many-instance-attributes,
+    too-few-public-methods,
+    # pytest fixtures trigger this.
+    redefined-outer-name,
+    # String statements are used as module-level notes.
+    pointless-string-statement,
+    # raise-missing-from is good practice but not enforced here.
+    raise-missing-from,
+
+[REPORTS]
+# Set the output format. Available formats are text, parseable, colorized, json2.
+output-format = colorized
+
+# Tells whether to display a full report or only the messages.
+reports = no
+
+[BASIC]
+# Good variable names which should always be accepted, separated by a comma.
+good-names = i,j,k,ex,Run,_,id,fn,fp
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length = 120
+
+# Maximum number of lines in a module.
+max-module-lines = 1000
+
+[DESIGN]
+# Maximum number of arguments for function / method.
+max-args = 10
+
+# Maximum number of locals for function / method body.
+max-locals = 20
+
+# Maximum number of return / yield for function / method body.
+max-returns = 10
+
+# Maximum number of statements in function / method body.
+max-statements = 60
+
+# Maximum number of parents for a class (see R0901).
+max-parents = 7
+
+# Maximum number of attributes for a class (see R0902).
+max-attributes = 10
+
+# Minimum number of public methods for a class (see R0903).
+min-public-methods = 0
+
+# Maximum number of public methods for a class (see R0904).
+max-public-methods = 30
+
+[TYPECHECK]
+# List of members which are set dynamically and missed by pylint inference
+# engine, and so shouldn't trigger E1101 when accessed.
+generated-members = boto3.client, boto3.resource, minify_html.minify

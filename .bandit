@@ -1,0 +1,6 @@
+# Bandit configuration for make-it-static
+# https://bandit.readthedocs.io/en/latest/config.html
+
+skips: ['B101']
+
+# B101: assert_used — pytest uses assert statements by design.

@@ -7,12 +7,11 @@ import os
 import pathlib
 import re
 import shutil
-import subprocess  # nosec B404 — required to run wget and helper scripts; never uses shell=True
+import subprocess  # nosec B404
+# subprocess is required to run wget and helper scripts; jobs.py never uses shell=True.
 import sys
 import tempfile
 import threading
-import uuid
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from deploy import invalidate_cloudfront, sync_to_s3
@@ -20,30 +19,30 @@ from deploy import invalidate_cloudfront, sync_to_s3
 
 def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
     """Run a command, streaming stdout+stderr to the console line by line."""
-    proc = subprocess.Popen(  # nosec B603 — runs pre-defined commands with argv list, no shell
+    with subprocess.Popen(  # nosec B603
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-    )
-    lines: list[str] = []
+    ) as proc:
+        lines: list[str] = []
 
-    def _reader():
-        for line in proc.stdout:
-            line = line.rstrip("\n")
-            print(line, flush=True)
-            lines.append(line)
+        def _reader():
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                print(line, flush=True)
+                lines.append(line)
 
-    reader_thread = threading.Thread(target=_reader, daemon=True)
-    reader_thread.start()
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            reader_thread.join()
+            raise
         reader_thread.join()
-        raise
-    reader_thread.join()
-    return subprocess.CompletedProcess(cmd, proc.returncode, "\n".join(lines), "")
+        return subprocess.CompletedProcess(cmd, proc.returncode, "\n".join(lines), "")
 
 
 def _make_workdir(post_id: int) -> pathlib.Path:
@@ -117,9 +116,10 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
                 continue
 
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(  # nosec B603 — argv list, no shell; URL validated by caller
+            result = subprocess.run(  # nosec B603
                 ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), full_url],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 print(f"[job] dynamic CDN asset downloaded: {full_url}")
@@ -189,9 +189,10 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
                 continue
             seen.add(chunk_url)
 
-            result = subprocess.run(  # nosec B603 — argv list, no shell; path validated via _safe_path
+            result = subprocess.run(  # nosec B603
                 ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(safe_local), chunk_url],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 print(f"[job] webpack chunk downloaded: {chunk_url}")
@@ -254,9 +255,10 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
             seen.add(asset_url)
 
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(  # nosec B603 — argv list, no shell; path validated via _safe_path
+            result = subprocess.run(  # nosec B603
                 ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), asset_url],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 print(f"[job] Elementor asset downloaded: {asset_url}")
@@ -298,7 +300,6 @@ def deploy_page(
     falls back to CLOUDFRONT_DISTRIBUTION_ID env var if absent).
     extra_cdn: additional domains to include in the download (CDNs present in the HTML).
     """
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     workdir = _make_workdir(post_id)
     workdir.mkdir(parents=True, exist_ok=True)
 

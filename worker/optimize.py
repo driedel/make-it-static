@@ -339,7 +339,7 @@ def _minify_remaining_js(root: Path) -> None:
             print(f"[optimize] warning: could not minify {js_path}: {exc}", file=sys.stderr)
 
 
-def optimize_directory(  # pylint: disable=too-many-arguments
+def optimize_directory(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     output_dir: str,
     bundle_css: bool = True,
     bundle_js: bool = True,

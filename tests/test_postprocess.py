@@ -43,7 +43,7 @@ def test_normalize_duplicate_clean_name_discards_second(tmp_path):
     normalize_query_string_files(tmp_path)
 
     assert (tmp_path / "style.css").exists()
-    assert list(tmp_path.glob("style.css@*")) == []
+    assert not list(tmp_path.glob("style.css@*"))
 
 
 def test_normalize_renames_version_only_query_string(tmp_path):
@@ -56,6 +56,7 @@ def test_normalize_renames_version_only_query_string(tmp_path):
     assert (tmp_path / "eicons.eot").exists()
     assert not f.exists()
     assert ("eicons.eot@5.34.0", "eicons.eot") in renames
+    assert renames
 
 
 def test_normalize_renames_v_prefixed_version(tmp_path):
@@ -67,6 +68,7 @@ def test_normalize_renames_v_prefixed_version(tmp_path):
 
     assert (tmp_path / "fontawesome.woff2").exists()
     assert not f.exists()
+    assert ("fontawesome.woff2@v4.7.0", "fontawesome.woff2") in renames
 
 
 def test_normalize_ignores_retina_images(tmp_path):
@@ -77,7 +79,7 @@ def test_normalize_ignores_retina_images(tmp_path):
     renames = normalize_query_string_files(tmp_path)
 
     assert f.exists()
-    assert renames == []
+    assert not renames
 
 
 def test_normalize_ignores_clean_files(tmp_path):
@@ -93,7 +95,7 @@ def test_normalize_ignores_clean_files(tmp_path):
 
 def test_normalize_empty_directory_returns_empty_list(tmp_path):
     """An empty directory produces no renames."""
-    assert normalize_query_string_files(tmp_path) == []
+    assert not normalize_query_string_files(tmp_path)
 
 
 # ---------------------------------------------------------------------------

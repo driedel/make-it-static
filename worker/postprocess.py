@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
+import pathlib
+import re
+import sys
+from urllib.parse import urljoin
+
 """
 postprocess.py — cleans up HTML after wget.
 
@@ -9,11 +15,6 @@ usage: python postprocess.py <OUTPUT_DIR> <ORIGIN_HOST>
 - Removes residual absolute references to the origin host.
 - Strips CMS-specific tags (WordPress emoji, REST links, oEmbed, generator meta).
 """
-
-import pathlib
-import re
-import sys
-from urllib.parse import urljoin
 
 # @ in filename came from wget replacing ? in query strings (--restrict-file-names=windows).
 # Two forms:  @key=value  (e.g. style.css@ver=6.4.1)

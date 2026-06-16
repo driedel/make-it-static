@@ -1,0 +1,21 @@
+---
+# Codacy configuration for make-it-static
+# https://docs.codacy.com/repositories-configure/codacy-configuration-file/
+
+engines:
+  bandit:
+    # .bandit configures skips (e.g., B101 assert_used in pytest).
+    enabled: true
+  pylint:
+    enabled: true
+  pylintpython3:
+    enabled: true
+  prospector:
+    enabled: true
+
+# Global paths to ignore.
+exclude_paths:
+  - ".git/**"
+  - "__pycache__/**"
+  - "**/__pycache__/**"
+  - "*.egg-info/**"
