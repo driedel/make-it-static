@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-import htmlmin
+import minify_html
 import rcssmin
 import rjsmin
 from bs4 import BeautifulSoup
@@ -367,12 +367,11 @@ def optimize_directory(  # pylint: disable=too-many-arguments
                 stats["js"] += _bundle_js(html_path, soup, root)
 
             if compress_html:
-                html_out = htmlmin.minify(
+                html_out = minify_html.minify(
                     str(soup),
-                    remove_comments=True,
-                    remove_empty_space=True,
-                    reduce_boolean_attributes=True,
-                    remove_optional_attribute_quotes=False,
+                    keep_comments=False,
+                    minify_css=True,
+                    minify_js=True,
                 )
                 html_path.write_text(html_out, encoding="utf-8")
                 print(f"[optimize] {html_path.name}: {len(raw)} → {len(html_out)} bytes")
