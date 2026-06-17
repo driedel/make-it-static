@@ -3,13 +3,13 @@ name: docker-dev
 description: Use when setting up the development environment, running Docker Compose, debugging containers, or switching between dev and production configurations.
 ---
 
-# Docker Development — make-it-static
+# Docker Development — make-it-staticify
 
 ## First-time setup
 
 ```bash
 # REQUIRED: create the external network before compose up
-docker network create make-it-static-network
+docker network create make-it-staticify-network
 
 # Copy and customize environment
 cp .env.example .env
@@ -72,7 +72,7 @@ ORIGIN_HOST=staging.yourdomain.com
 
 ## Critical gotchas
 
-- **External network required**: `make-it-static-network` must exist before any `docker compose` command. Compose declares it as `external: true` and fails if missing.
+- **External network required**: `make-it-staticify-network` must exist before any `docker compose` command. Compose declares it as `external: true` and fails if missing.
 - **MinIO credentials**: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` double as MinIO root credentials in dev. Change defaults if exposing MinIO.
 - **Bucket auto-creation**: The `minio-init` service creates the bucket on startup in dev only.
 - **Path-style URLs**: Dev uses `S3_USE_PATH_STYLE=true` because MinIO doesn't support virtual-hosted style.

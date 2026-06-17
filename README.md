@@ -65,7 +65,7 @@ ORIGIN_HOST=staging.yoursite.com   # origin site domain
 ### 2. Start the services
 
 ```bash
-docker network create make-it-static-network
+docker network create make-it-staticify-network
 docker compose up --build
 ```
 
@@ -204,6 +204,80 @@ You will see each pipeline step:
 
 ---
 
+## Using published Docker images (WordPress / self-hosted)
+
+Pre-built images are published to Docker Hub:
+
+- `daniloriedel/make-it-staticify-api`
+- `daniloriedel/make-it-staticify-worker`
+
+You can add them to an existing Docker Compose project (for example, alongside WordPress) without cloning this repository.
+
+### Quick start
+
+1. Add the services from [`docker-compose.wordpress.yml`](docker-compose.wordpress.yml) to your WordPress `docker-compose.yml`.
+
+2. Create or update your `.env`:
+
+   ```bash
+   # HMAC secret shared with the WordPress plugin
+   MAKE_IT_STATIC_HMAC_SECRET=$(openssl rand -hex 32)
+
+   # S3 / MinIO credentials
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   AWS_REGION=us-east-1
+   S3_BUCKET=...
+   S3_ENDPOINT_URL=              # leave empty for real AWS
+   S3_USE_PATH_STYLE=false       # true for MinIO, false for AWS
+
+   # Optional
+   CLOUDFRONT_DISTRIBUTION_ID=...
+   ```
+
+3. Start the services:
+
+   ```bash
+   docker compose up -d make-it-staticify-redis make-it-staticify-api make-it-staticify-worker
+   ```
+
+4. Verify the API:
+
+   ```bash
+   curl http://localhost:8123/health
+   ```
+
+5. Point your WordPress plugin to `http://make-it-staticify-api:8000/publish` (inside the Docker network) or `http://localhost:8123/publish` from the host.
+
+### Required environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `MAKE_IT_STATIC_HMAC_SECRET` | Shared HMAC secret. Must match the secret configured in the WordPress plugin. |
+| `AWS_ACCESS_KEY_ID` | S3 access key. |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret key. |
+| `AWS_REGION` | AWS region (e.g. `us-east-1`). |
+| `S3_BUCKET` | Target S3 bucket. |
+| `S3_ENDPOINT_URL` | Custom endpoint. Leave empty for AWS. Use `http://minio:9000` for MinIO. |
+| `S3_USE_PATH_STYLE` | `true` for MinIO, `false` for AWS. |
+
+### Optional environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HMAC_MAX_SKEW` | `300` | Replay tolerance in seconds. |
+| `CLOUDFRONT_DISTRIBUTION_ID` | empty | Fallback CloudFront distribution for invalidation. |
+| `CORS_ORIGINS` | `*` | Allowed CORS origins. Restrict in production. |
+
+### Image tags
+
+- `latest` — built from the latest tag or manual workflow run.
+- `vX.Y.Z`, `vX.Y` — semantic versions created from Git tags.
+
+Set `DOCKERHUB_USERNAME` in your `.env` if you want to pull from a fork under your own Docker Hub account.
+
+---
+
 ## Deploying to production — GitHub Actions
 
 The repository includes an example workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
@@ -220,11 +294,11 @@ sudo usermod -aG docker $USER
 newgrp docker
 
 # Create the app directory
-sudo mkdir -p /opt/make-it-static
-sudo chown $USER:$USER /opt/make-it-static
+sudo mkdir -p /opt/make-it-staticify
+sudo chown $USER:$USER /opt/make-it-staticify
 ```
 
-The first deploy (via the workflow) will sync all files into `/opt/make-it-static/`.
+The first deploy (via the workflow) will sync all files into `/opt/make-it-staticify/`.
 
 ### GitHub Secrets
 
@@ -496,9 +570,10 @@ pm.request.headers.add({ key: "Content-Type", value: "application/json" });
 ## Structure
 
 ```
-static-deploy-service/
-├── docker-compose.yml          # dev (with MinIO)
-├── docker-compose.prod.yml     # prod (without MinIO)
+make-it-staticify/
+├── docker-compose.yml             # dev (with MinIO)
+├── docker-compose.prod.yml        # prod (without MinIO)
+├── docker-compose.wordpress.yml   # example for WordPress integration
 ├── .env.example
 ├── IAM_POLICY.json             # minimum IAM policy for the AWS key
 ├── test-publish.sh             # curl client for manual testing

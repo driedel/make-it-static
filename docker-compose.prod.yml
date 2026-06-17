@@ -16,7 +16,7 @@ services:
       - redis
     networks:
       - default
-      - make-it-static-network
+      - make-it-staticify-network
 
   worker:
     build: ./worker
@@ -26,11 +26,11 @@ services:
       - redis
     networks:
       - default
-      - make-it-static-network
+      - make-it-staticify-network
 
 volumes:
   redis-data:
 
 networks:
-  make-it-static-network:
+  make-it-staticify-network:
     external: true

@@ -1,0 +1,81 @@
+# Example: integrating Make it Staticify into an existing WordPress project.
+#
+# Copy the three services below into your WordPress docker-compose.yml and
+# configure the environment variables in a .env file or directly here.
+#
+# The WordPress plugin should POST to:
+#   http://make-it-staticify-api:8000/publish  (inside this Docker network)
+# or, from the Docker host:
+#   http://localhost:8123/publish
+#
+# Required environment variables:
+#   HMAC_SECRET              — shared secret between plugin and API
+#   AWS_ACCESS_KEY_ID        — S3/MinIO access key
+#   AWS_SECRET_ACCESS_KEY    — S3/MinIO secret key
+#   AWS_REGION               — e.g. us-east-1
+#   S3_BUCKET                — target bucket name
+#   S3_ENDPOINT_URL          — empty for real AWS; e.g. http://minio:9000 for MinIO
+#   S3_USE_PATH_STYLE        — true for MinIO; false for AWS
+#
+# Optional:
+#   CLOUDFRONT_DISTRIBUTION_ID — default CloudFront distribution to invalidate
+#   CORS_ORIGINS                 — defaults to "*"
+#   HMAC_MAX_SKEW                — defaults to 300
+
+services:
+  # wordpress: ...
+  # db: ...
+
+  make-it-staticify-redis:
+    image: redis:7-alpine
+    container_name: make-it-staticify-redis
+    restart: unless-stopped
+    volumes:
+      - make-it-staticify-redis:/data
+
+  make-it-staticify-api:
+    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-staticify-api:latest
+    container_name: make-it-staticify-api
+    restart: unless-stopped
+    environment:
+      HMAC_SECRET: "${MAKE_IT_STATIC_HMAC_SECRET:?HMAC_SECRET is required}"
+      HMAC_MAX_SKEW: "${HMAC_MAX_SKEW:-300}"
+      REDIS_URL: "redis://make-it-staticify-redis:6379/0"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+      AWS_REGION: "${AWS_REGION:?AWS_REGION is required}"
+      S3_BUCKET: "${S3_BUCKET:?S3_BUCKET is required}"
+      S3_ENDPOINT_URL: "${S3_ENDPOINT_URL:-}"
+      S3_USE_PATH_STYLE: "${S3_USE_PATH_STYLE:-false}"
+      CLOUDFRONT_DISTRIBUTION_ID: "${CLOUDFRONT_DISTRIBUTION_ID:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+    ports:
+      - "8123:8000"
+    depends_on:
+      - make-it-staticify-redis
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  make-it-staticify-worker:
+    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-staticify-worker:latest
+    container_name: make-it-staticify-worker
+    restart: unless-stopped
+    environment:
+      HMAC_SECRET: "${MAKE_IT_STATIC_HMAC_SECRET:?HMAC_SECRET is required}"
+      HMAC_MAX_SKEW: "${HMAC_MAX_SKEW:-300}"
+      REDIS_URL: "redis://make-it-staticify-redis:6379/0"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+      AWS_REGION: "${AWS_REGION:?AWS_REGION is required}"
+      S3_BUCKET: "${S3_BUCKET:?S3_BUCKET is required}"
+      S3_ENDPOINT_URL: "${S3_ENDPOINT_URL:-}"
+      S3_USE_PATH_STYLE: "${S3_USE_PATH_STYLE:-false}"
+      CLOUDFRONT_DISTRIBUTION_ID: "${CLOUDFRONT_DISTRIBUTION_ID:-}"
+    depends_on:
+      - make-it-staticify-redis
+
+volumes:
+  make-it-staticify-redis:

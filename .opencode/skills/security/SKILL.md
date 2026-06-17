@@ -1,9 +1,9 @@
 ---
 name: security
-description: Use when working with HMAC authentication, environment variables, secrets management, AWS credentials, or any security-sensitive configuration in the make-it-static project.
+description: Use when working with HMAC authentication, environment variables, secrets management, AWS credentials, or any security-sensitive configuration in the make-it-staticify project.
 ---
 
-# Security — make-it-static
+# Security — make-it-staticify
 
 ## HMAC Authentication
 

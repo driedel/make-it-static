@@ -1,4 +1,4 @@
-# Bandit configuration for make-it-static
+# Bandit configuration for make-it-staticify
 # https://bandit.readthedocs.io/en/latest/config.html
 
 skips: ['B101']

@@ -1,4 +1,4 @@
-# AGENTS.md — Make it Static
+# AGENTS.md — Make it Staticify
 
 This file is written for AI coding agents. It assumes no prior knowledge of the project. The human-facing documentation lives in `README.md`.
 
@@ -8,7 +8,7 @@ This file is written for AI coding agents. It assumes no prior knowledge of the 
 
 ```bash
 # First-time setup
-docker network create make-it-static-network   # REQUIRED — compose won't create it
+docker network create make-it-staticify-network   # REQUIRED — compose won't create it
 cp .env.example .env
 
 # Start dev (API + Worker + Redis + MinIO + nginx preview)
@@ -23,7 +23,7 @@ docker run --rm \
   -v "$(pwd)/worker:/app/worker" \
   -v "$(pwd)/tests:/app/tests" \
   -w /app \
-  make-it-static-worker \
+  make-it-staticify-worker \
   bash -c "pip install --quiet -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt && pytest tests/ -v --cov=api --cov=worker"
 
 # Run security scans inside a temporary container
@@ -31,7 +31,7 @@ docker run --rm \
   -v "$(pwd)/api:/app/api" \
   -v "$(pwd)/worker:/app/worker" \
   -w /app \
-  make-it-static-worker \
+  make-it-staticify-worker \
   bash -c "pip install --quiet bandit pip-audit && bandit -r api worker && pip-audit -r api/requirements.txt -r worker/requirements.txt"
 
 # Follow worker logs
@@ -40,7 +40,7 @@ docker compose logs -f worker
 
 ## Project overview
 
-**Make it Static** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or MinIO) with an optional CloudFront invalidation.
+**Make it Staticify** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or MinIO) with an optional CloudFront invalidation.
 
 A client sends a signed `POST /publish` request with a URL and a `post_id`. The API validates the HMAC signature, enqueues a job in Redis, and an RQ worker executes the pipeline asynchronously.
 
@@ -87,9 +87,10 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 │   ├── tests.yml            # pytest on push / PR
 │   ├── codacy.yml           # Codacy security scan
 │   └── deploy.yml           # Manual EC2 deploy workflow
-├── docker-compose.yml       # Dev stack with Redis + API + Worker + MinIO + nginx preview
-├── docker-compose.prod.yml  # Production stack with Redis + API + Worker only
-├── .env.example             # Environment variable template
+├── docker-compose.yml             # Dev stack with Redis + API + Worker + MinIO + nginx preview
+├── docker-compose.prod.yml        # Production stack with Redis + API + Worker only
+├── docker-compose.wordpress.yml   # Example for adding the service to a WordPress project
+├── .env.example                   # Environment variable template
 ├── IAM_POLICY.json          # Minimum AWS IAM policy for production
 └── README.md                # Human-facing documentation
 ```
@@ -154,7 +155,7 @@ Copy `.env.example` to `.env` and adjust:
 
 2. Create the external Docker network (required by both compose files):
    ```bash
-   docker network create make-it-static-network
+   docker network create make-it-staticify-network
    ```
 
 3. Start the dev stack:
@@ -188,6 +189,25 @@ Production `.env` requirements:
 - `CLOUDFRONT_DISTRIBUTION_ID` set or passed per-request.
 - `SCRAPE_INTERNAL_HOSTS` should be empty or removed.
 
+### Publishing images to Docker Hub
+
+A separate workflow (`.github/workflows/dockerhub.yml`) builds and pushes the API and Worker images to Docker Hub:
+
+- `daniloriedel/make-it-staticify-api`
+- `daniloriedel/make-it-staticify-worker`
+
+**Triggers:**
+- Manual (`workflow_dispatch`) — publishes `latest`.
+- Git tags matching `v*.*.*` — publishes `latest`, `vX.Y.Z`, and `vX.Y`.
+
+**Required repository secrets:**
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+The images are multi-arch (`linux/amd64`, `linux/arm64`) and are built from the existing `api/Dockerfile` and `worker/Dockerfile` — the project architecture is preserved.
+
+Use [`docker-compose.wordpress.yml`](docker-compose.wordpress.yml) as a starting point for integrating the published images into another Docker Compose project (for example, alongside WordPress). The WordPress plugin should POST to `http://make-it-staticify-api:8000/publish` inside the Docker network.
+
 ## Testing
 
 > **Rule**: all tests must run inside Docker. Do not install dependencies or run `pytest` on the host machine.
@@ -200,7 +220,7 @@ docker run --rm \
   -v "$(pwd)/worker:/app/worker" \
   -v "$(pwd)/tests:/app/tests" \
   -w /app \
-  make-it-static-worker \
+  make-it-staticify-worker \
   bash -c "pip install --quiet -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt && pytest tests/ -v --cov=api --cov=worker --cov-report=term-missing --cov-report=xml"
 ```
 
@@ -273,11 +293,11 @@ A sample GitHub Actions workflow is at `.github/workflows/deploy.yml`. It is **d
 - `EC2_SSH_KEY`
 - `ENV_FILE`
 
-The workflow runs tests, rsyncs the repository to `/opt/make-it-static/` on the EC2 instance, and restarts the production Docker Compose stack.
+The workflow runs tests, rsyncs the repository to `/opt/make-it-staticify/` on the EC2 instance, and restarts the production Docker Compose stack.
 
 ## Key gotchas
 
-- **External network**: `make-it-static-network` must exist before `docker compose up`. Compose declares it as `external: true` and will fail if missing.
+- **External network**: `make-it-staticify-network` must exist before `docker compose up`. Compose declares it as `external: true` and will fail if missing.
 - **HMAC auth**: All `/publish` requests require `X-Signature` (hex HMAC-SHA256 of raw body) and `X-Timestamp` headers. Replay window: 300s (configurable via `HMAC_MAX_SKEW`).
 - **CORS**: Open (`*`) in dev. Restrict in production via `CORS_ORIGINS`.
 - **`.env` is gitignored**. Always copy from `.env.example` first.
@@ -290,6 +310,7 @@ The workflow runs tests, rsyncs the repository to `/opt/make-it-static/` on the 
 |----------|---------|------|
 | `tests.yml` | push/PR to `main` | pytest + coverage |
 | `codacy.yml` | push/PR to `main` + weekly cron | Codacy security scan |
+| `dockerhub.yml` | manual dispatch + tags `v*.*.*` | Build and push API + Worker images to Docker Hub |
 | `deploy.yml` | manual dispatch | Run tests, rsync to EC2, restart via `docker-compose.prod.yml` |
 
 ## Important agent notes
