@@ -1,13 +1,12 @@
-```
-                      _          _ _         _        _   _      
-                     | |        (_) |       | |      | | (_)     
-      _ __ ___   __ _| | _____   _| |_   ___| |_ __ _| |_ _  ___ 
-     | '_ ` _ \ / _` | |/ / _ \ | | __| / __| __/ _` | __| |/ __|
-     | | | | | | (_| |   <  __/ | | |_  \__ \ || (_| | |_| | (__ 
-     |_| |_| |_|\__,_|_|\_\___| |_|\__| |___/\__\__,_|\__|_|\___|
-```
+<picture>
+  <source srcset="static/logo-dark.svg" media="(prefers-color-scheme: dark)">
+  <source srcset="static/logo-light.svg" media="(prefers-color-scheme: light)">
+  <img src="static/logo-light.svg" width="300" alt="Make It Static">
+</picture>
 
 Service that receives a URL via webhook, captures the rendered page (HTML + static assets) with `wget`, post-processes, optimizes, and publishes to S3 with CloudFront invalidation.
+
+- - -
 
 ## Architecture
 
