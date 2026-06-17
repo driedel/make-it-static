@@ -1,5 +1,5 @@
 """
-Make it Staticify — API
+Make it Static — API
 - POST   /publish      : receives webhook, validates HMAC, enqueues job
 - GET    /jobs/{id}    : query job status
 - DELETE /jobs/{id}    : cancel a queued or running job
@@ -45,7 +45,7 @@ def _validate_url(url: str) -> None:
 
 
 # --- Infra ---
-app = FastAPI(title="Make it Staticify API", version="1.0.0")
+app = FastAPI(title="Make it Static API", version="1.0.0")
 
 # CORS: configure allowed origins via CORS_ORIGINS env var (comma-separated).
 # Defaults to "*" for dev. Restrict in production.

@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source="https://github.com/daniloriedel/make-it-staticify"
-LABEL org.opencontainers.image.description="Make it Staticify — FastAPI webhook service"
+LABEL org.opencontainers.image.source="https://github.com/daniloriedel/make-it-static"
+LABEL org.opencontainers.image.description="Make it Static — FastAPI webhook service"
 
 WORKDIR /app
 

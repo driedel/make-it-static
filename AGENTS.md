@@ -1,4 +1,4 @@
-# AGENTS.md — Make it Staticify
+# AGENTS.md — Make it Static
 
 This file is written for AI coding agents. It assumes no prior knowledge of the project. The human-facing documentation lives in `README.md`.
 
@@ -8,7 +8,7 @@ This file is written for AI coding agents. It assumes no prior knowledge of the 
 
 ```bash
 # First-time setup
-docker network create make-it-staticify-network   # REQUIRED — compose won't create it
+docker network create make-it-static-network   # REQUIRED — compose won't create it
 cp .env.example .env
 
 # Start dev (API + Worker + Redis + MinIO + nginx preview)
@@ -23,7 +23,7 @@ docker run --rm \
   -v "$(pwd)/worker:/app/worker" \
   -v "$(pwd)/tests:/app/tests" \
   -w /app \
-  make-it-staticify-worker \
+  make-it-static-worker \
   bash -c "pip install --quiet -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt && pytest tests/ -v --cov=api --cov=worker"
 
 # Run security scans inside a temporary container
@@ -31,7 +31,7 @@ docker run --rm \
   -v "$(pwd)/api:/app/api" \
   -v "$(pwd)/worker:/app/worker" \
   -w /app \
-  make-it-staticify-worker \
+  make-it-static-worker \
   bash -c "pip install --quiet bandit pip-audit && bandit -r api worker && pip-audit -r api/requirements.txt -r worker/requirements.txt"
 
 # Follow worker logs
@@ -40,7 +40,7 @@ docker compose logs -f worker
 
 ## Project overview
 
-**Make it Staticify** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or MinIO) with an optional CloudFront invalidation.
+**Make it Static** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or MinIO) with an optional CloudFront invalidation.
 
 A client sends a signed `POST /publish` request with a URL and a `post_id`. The API validates the HMAC signature, enqueues a job in Redis, and an RQ worker executes the pipeline asynchronously.
 
@@ -155,7 +155,7 @@ Copy `.env.example` to `.env` and adjust:
 
 2. Create the external Docker network (required by both compose files):
    ```bash
-   docker network create make-it-staticify-network
+   docker network create make-it-static-network
    ```
 
 3. Start the dev stack:
@@ -193,8 +193,8 @@ Production `.env` requirements:
 
 A separate workflow (`.github/workflows/dockerhub.yml`) builds and pushes the API and Worker images to Docker Hub:
 
-- `daniloriedel/make-it-staticify-api`
-- `daniloriedel/make-it-staticify-worker`
+- `daniloriedel/make-it-static-api`
+- `daniloriedel/make-it-static-worker`
 
 **Triggers:**
 - Manual (`workflow_dispatch`) — publishes `latest`.
@@ -206,7 +206,7 @@ A separate workflow (`.github/workflows/dockerhub.yml`) builds and pushes the AP
 
 The images are multi-arch (`linux/amd64`, `linux/arm64`) and are built from the existing `api/Dockerfile` and `worker/Dockerfile` — the project architecture is preserved.
 
-Use [`docker-compose.wordpress.yml`](docker-compose.wordpress.yml) as a starting point for integrating the published images into another Docker Compose project (for example, alongside WordPress). The WordPress plugin should POST to `http://make-it-staticify-api:8000/publish` inside the Docker network.
+Use [`docker-compose.wordpress.yml`](docker-compose.wordpress.yml) as a starting point for integrating the published images into another Docker Compose project (for example, alongside WordPress). The WordPress plugin should POST to `http://make-it-static-api:8000/publish` inside the Docker network.
 
 ## Testing
 
@@ -220,7 +220,7 @@ docker run --rm \
   -v "$(pwd)/worker:/app/worker" \
   -v "$(pwd)/tests:/app/tests" \
   -w /app \
-  make-it-staticify-worker \
+  make-it-static-worker \
   bash -c "pip install --quiet -r api/requirements.txt -r worker/requirements.txt -r tests/requirements.txt && pytest tests/ -v --cov=api --cov=worker --cov-report=term-missing --cov-report=xml"
 ```
 
@@ -293,11 +293,11 @@ A sample GitHub Actions workflow is at `.github/workflows/deploy.yml`. It is **d
 - `EC2_SSH_KEY`
 - `ENV_FILE`
 
-The workflow runs tests, rsyncs the repository to `/opt/make-it-staticify/` on the EC2 instance, and restarts the production Docker Compose stack.
+The workflow runs tests, rsyncs the repository to `/opt/make-it-static/` on the EC2 instance, and restarts the production Docker Compose stack.
 
 ## Key gotchas
 
-- **External network**: `make-it-staticify-network` must exist before `docker compose up`. Compose declares it as `external: true` and will fail if missing.
+- **External network**: `make-it-static-network` must exist before `docker compose up`. Compose declares it as `external: true` and will fail if missing.
 - **HMAC auth**: All `/publish` requests require `X-Signature` (hex HMAC-SHA256 of raw body) and `X-Timestamp` headers. Replay window: 300s (configurable via `HMAC_MAX_SKEW`).
 - **CORS**: Open (`*`) in dev. Restrict in production via `CORS_ORIGINS`.
 - **`.env` is gitignored**. Always copy from `.env.example` first.

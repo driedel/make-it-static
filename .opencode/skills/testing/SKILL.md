@@ -1,9 +1,9 @@
 ---
 name: testing
-description: Use when running tests, writing new tests, debugging test failures, or working with pytest fixtures and coverage in the make-it-staticify project.
+description: Use when running tests, writing new tests, debugging test failures, or working with pytest fixtures and coverage in the make-it-static project.
 ---
 
-# Testing — make-it-staticify
+# Testing — make-it-static
 
 ## Running tests
 

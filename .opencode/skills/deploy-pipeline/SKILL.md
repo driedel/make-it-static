@@ -3,7 +3,7 @@ name: deploy-pipeline
 description: Use when modifying the worker pipeline, adding new postprocess/optimize steps, debugging job failures, or working with S3 upload and CloudFront invalidation logic.
 ---
 
-# Deploy Pipeline — make-it-staticify
+# Deploy Pipeline — make-it-static
 
 ## Pipeline overview
 

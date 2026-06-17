@@ -15,7 +15,7 @@ services:
       - redis
     networks:
       - default
-      - make-it-staticify-network
+      - make-it-static-network
 
   worker:
     build: ./worker
@@ -26,7 +26,7 @@ services:
       - minio
     networks:
       - default
-      - make-it-staticify-network
+      - make-it-static-network
 
   # ---- Local S3 for testing (remove in prod) ----
   minio:
@@ -76,5 +76,5 @@ volumes:
   minio-data:
 
 networks:
-  make-it-staticify-network:
+  make-it-static-network:
     external: true

@@ -65,7 +65,7 @@ ORIGIN_HOST=staging.yoursite.com   # origin site domain
 ### 2. Start the services
 
 ```bash
-docker network create make-it-staticify-network
+docker network create make-it-static-network
 docker compose up --build
 ```
 
@@ -208,8 +208,8 @@ You will see each pipeline step:
 
 Pre-built images are published to Docker Hub:
 
-- `daniloriedel/make-it-staticify-api`
-- `daniloriedel/make-it-staticify-worker`
+- `daniloriedel/make-it-static-api`
+- `daniloriedel/make-it-static-worker`
 
 You can add them to an existing Docker Compose project (for example, alongside WordPress) without cloning this repository.
 
@@ -238,7 +238,7 @@ You can add them to an existing Docker Compose project (for example, alongside W
 3. Start the services:
 
    ```bash
-   docker compose up -d make-it-staticify-redis make-it-staticify-api make-it-staticify-worker
+   docker compose up -d make-it-static-redis make-it-static-api make-it-static-worker
    ```
 
 4. Verify the API:
@@ -247,7 +247,7 @@ You can add them to an existing Docker Compose project (for example, alongside W
    curl http://localhost:8123/health
    ```
 
-5. Point your WordPress plugin to `http://make-it-staticify-api:8000/publish` (inside the Docker network) or `http://localhost:8123/publish` from the host.
+5. Point your WordPress plugin to `http://make-it-static-api:8000/publish` (inside the Docker network) or `http://localhost:8123/publish` from the host.
 
 ### Required environment variables
 
@@ -294,11 +294,11 @@ sudo usermod -aG docker $USER
 newgrp docker
 
 # Create the app directory
-sudo mkdir -p /opt/make-it-staticify
-sudo chown $USER:$USER /opt/make-it-staticify
+sudo mkdir -p /opt/make-it-static
+sudo chown $USER:$USER /opt/make-it-static
 ```
 
-The first deploy (via the workflow) will sync all files into `/opt/make-it-staticify/`.
+The first deploy (via the workflow) will sync all files into `/opt/make-it-static/`.
 
 ### GitHub Secrets
 
@@ -570,7 +570,7 @@ pm.request.headers.add({ key: "Content-Type", value: "application/json" });
 ## Structure
 
 ```
-make-it-staticify/
+make-it-static/
 ├── docker-compose.yml             # dev (with MinIO)
 ├── docker-compose.prod.yml        # prod (without MinIO)
 ├── docker-compose.wordpress.yml   # example for WordPress integration

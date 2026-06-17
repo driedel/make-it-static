@@ -1,10 +1,10 @@
-# Example: integrating Make it Staticify into an existing WordPress project.
+# Example: integrating Make it Static into an existing WordPress project.
 #
 # Copy the three services below into your WordPress docker-compose.yml and
 # configure the environment variables in a .env file or directly here.
 #
 # The WordPress plugin should POST to:
-#   http://make-it-staticify-api:8000/publish  (inside this Docker network)
+#   http://make-it-static-api:8000/publish  (inside this Docker network)
 # or, from the Docker host:
 #   http://localhost:8123/publish
 #
@@ -26,21 +26,21 @@ services:
   # wordpress: ...
   # db: ...
 
-  make-it-staticify-redis:
+  make-it-static-redis:
     image: redis:7-alpine
-    container_name: make-it-staticify-redis
+    container_name: make-it-static-redis
     restart: unless-stopped
     volumes:
-      - make-it-staticify-redis:/data
+      - make-it-static-redis:/data
 
-  make-it-staticify-api:
-    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-staticify-api:latest
-    container_name: make-it-staticify-api
+  make-it-static-api:
+    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-static-api:latest
+    container_name: make-it-static-api
     restart: unless-stopped
     environment:
       HMAC_SECRET: "${MAKE_IT_STATIC_HMAC_SECRET:?HMAC_SECRET is required}"
       HMAC_MAX_SKEW: "${HMAC_MAX_SKEW:-300}"
-      REDIS_URL: "redis://make-it-staticify-redis:6379/0"
+      REDIS_URL: "redis://make-it-static-redis:6379/0"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
       AWS_REGION: "${AWS_REGION:?AWS_REGION is required}"
@@ -52,21 +52,21 @@ services:
     ports:
       - "8123:8000"
     depends_on:
-      - make-it-staticify-redis
+      - make-it-static-redis
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  make-it-staticify-worker:
-    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-staticify-worker:latest
-    container_name: make-it-staticify-worker
+  make-it-static-worker:
+    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-static-worker:latest
+    container_name: make-it-static-worker
     restart: unless-stopped
     environment:
       HMAC_SECRET: "${MAKE_IT_STATIC_HMAC_SECRET:?HMAC_SECRET is required}"
       HMAC_MAX_SKEW: "${HMAC_MAX_SKEW:-300}"
-      REDIS_URL: "redis://make-it-staticify-redis:6379/0"
+      REDIS_URL: "redis://make-it-static-redis:6379/0"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
       AWS_REGION: "${AWS_REGION:?AWS_REGION is required}"
@@ -75,7 +75,7 @@ services:
       S3_USE_PATH_STYLE: "${S3_USE_PATH_STYLE:-false}"
       CLOUDFRONT_DISTRIBUTION_ID: "${CLOUDFRONT_DISTRIBUTION_ID:-}"
     depends_on:
-      - make-it-staticify-redis
+      - make-it-static-redis
 
 volumes:
-  make-it-staticify-redis:
+  make-it-static-redis:
