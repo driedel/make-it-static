@@ -53,7 +53,7 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 - **Object storage (dev)**: MinIO (S3-compatible)
 - **Static preview (dev)**: nginx with an `envsubst`-processed template
 - **Container runtime**: Docker / Docker Compose v2
-- **CI / CD**: GitHub Actions (pytest, Codacy security scan, optional EC2 deploy)
+- **CI / CD**: GitHub Actions (pytest + pylint, CodeQL security scan, optional EC2 deploy)
 - **Target Python version**: 3.12 (the Docker images use `python:3.12-slim`)
 
 ## Repository layout
@@ -84,13 +84,14 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 ├── nginx/
 │   └── default.conf.template # Local preview nginx config
 ├── .github/workflows/
-│   ├── tests.yml            # pytest on push / PR
-│   ├── codacy.yml           # Codacy security scan
+│   ├── tests.yml            # pytest + pylint on push / PR
+│   ├── codeql.yml           # CodeQL security scan
 │   └── deploy.yml           # Manual EC2 deploy workflow
 ├── docker-compose.yml             # Dev stack with Redis + API + Worker + MinIO + nginx preview
 ├── docker-compose.prod.yml        # Production stack with Redis + API + Worker only
 ├── docker-compose.wordpress.yml   # Example for adding the service to a WordPress project
 ├── .env.example                   # Environment variable template
+├── .pylintrc                  # Pylint config (used by the lint step in tests.yml)
 ├── IAM_POLICY.json          # Minimum AWS IAM policy for production
 └── README.md                # Human-facing documentation
 ```
@@ -308,8 +309,8 @@ The workflow runs tests, rsyncs the repository to `/opt/make-it-static/` on the 
 
 | Workflow | Trigger | What |
 |----------|---------|------|
-| `tests.yml` | push/PR to `main` | pytest + coverage |
-| `codacy.yml` | push/PR to `main` + weekly cron | Codacy security scan |
+| `tests.yml` | push/PR to `main` | pytest + coverage, pylint (blocking, 10.00/10 required) |
+| `codeql.yml` | push/PR to `main` + weekly cron | CodeQL security scan (SARIF → GitHub code scanning) |
 | `dockerhub.yml` | manual dispatch + tags `v*.*.*` | Build and push API + Worker images to Docker Hub |
 | `deploy.yml` | manual dispatch | Run tests, rsync to EC2, restart via `docker-compose.prod.yml` |
 
