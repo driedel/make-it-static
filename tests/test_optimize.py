@@ -92,9 +92,9 @@ def test_bundle_css_single_file_minifies_in_place(tmp_path):
 
     assert result == 1
     bundles = list(tmp_path.glob("bundle.*.css"))
-    assert len(bundles) == 0  # single file: no bundle created
+    assert not bundles  # single file: no bundle created
     content = (tmp_path / "style.css").read_text()
-    assert "body{color:red}" == content
+    assert content == "body{color:red}"
 
 
 def test_bundle_css_multiple_files_creates_bundle(tmp_path):

@@ -68,7 +68,7 @@ def verify_signature(raw_body: bytes, sig_header: str, ts_header: str) -> None:
     try:
         ts = int(ts_header)
     except ValueError:
-        raise HTTPException(status_code=401, detail="invalid timestamp")
+        raise HTTPException(status_code=401, detail="invalid timestamp") from None
     if abs(time.time() - ts) > MAX_SKEW:
         raise HTTPException(status_code=401, detail="timestamp out of window")
 
@@ -79,6 +79,7 @@ def verify_signature(raw_body: bytes, sig_header: str, ts_header: str) -> None:
 
 @app.get("/health")
 def health():
+    """Health check — reports API liveness and Redis connectivity."""
     try:
         redis_conn.ping()
         redis_ok = True
@@ -89,6 +90,7 @@ def health():
 
 @app.post("/publish")
 async def publish(req: Request):
+    """Validates the HMAC-signed webhook payload and enqueues a deploy job."""
     raw = await req.body()
     verify_signature(
         raw_body=raw,
@@ -99,7 +101,7 @@ async def publish(req: Request):
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="invalid json")
+        raise HTTPException(status_code=400, detail="invalid json") from None
 
     url = payload.get("url")
     post_id = payload.get("post_id")
@@ -144,10 +146,11 @@ async def publish(req: Request):
 
 @app.delete("/jobs/{job_id}")
 def cancel_job(job_id: str):
+    """Cancels a queued or running job (404 if unknown, 409 if already finished)."""
     try:
         job = Job.fetch(job_id, connection=redis_conn)
     except Exception:
-        raise HTTPException(status_code=404, detail="job not found")
+        raise HTTPException(status_code=404, detail="job not found") from None
 
     status = job.get_status()
     if status == "queued":
@@ -165,10 +168,11 @@ def cancel_job(job_id: str):
 
 @app.get("/jobs/{job_id}")
 def job_status(job_id: str):
+    """Returns the status, result, and timeline of a job."""
     try:
         job = Job.fetch(job_id, connection=redis_conn)
     except Exception:
-        raise HTTPException(status_code=404, detail="job not found")
+        raise HTTPException(status_code=404, detail="job not found") from None
 
     return {
         "id": job.id,

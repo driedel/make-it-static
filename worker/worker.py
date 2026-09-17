@@ -7,6 +7,7 @@ from rq import Queue, Worker
 
 
 def main():
+    """Connects to Redis and starts the RQ worker on the 'deploys' queue."""
     conn = Redis.from_url(os.environ["REDIS_URL"])
     queues = [Queue("deploys", connection=conn)]
     worker = Worker(queues, connection=conn)

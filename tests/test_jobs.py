@@ -50,6 +50,7 @@ def test_download_cdn_assets_finds_url_in_html_and_downloads(tmp_path, monkeypat
     html.write_text("var font = 'https://cdn.example.com/assets/font.woff2';")
 
     def mock_run(cmd, **_kwargs):
+        """Fake subprocess.run that writes the downloaded file to the -O target."""
         out_path = Path(cmd[cmd.index("-O") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(b"fake-data")
@@ -93,6 +94,7 @@ def test_download_cdn_assets_deduplicates_urls(tmp_path, monkeypatch):
     call_count = []
 
     def mock_run(cmd, **_kwargs):
+        """Fake subprocess.run that records the call and writes a stub file."""
         call_count.append(1)
         out_path = Path(cmd[cmd.index("-O") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
