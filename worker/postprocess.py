@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import pathlib
-import re
-import sys
-from urllib.parse import urljoin
-
 """
 postprocess.py — cleans up HTML after wget.
 
@@ -15,6 +8,12 @@ usage: python postprocess.py <OUTPUT_DIR> <ORIGIN_HOST>
 - Removes residual absolute references to the origin host.
 - Strips CMS-specific tags (WordPress emoji, REST links, oEmbed, generator meta).
 """
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+from urllib.parse import urljoin
 
 # @ in filename came from wget replacing ? in query strings (--restrict-file-names=windows).
 # Two forms:  @key=value  (e.g. style.css@ver=6.4.1)
@@ -86,6 +85,7 @@ def apply_renames_to_text_files(output_dir: pathlib.Path, renames: list[tuple[st
 
 
 def build_patterns(origin_host: str, extra_hosts: list[str] | None = None):
+    """Builds the (pattern, replacement) pairs used to strip hosts and CMS artifacts."""
     host_patterns = [
         # any http/https://<host> → relative URL (origin + extra CDNs).
         # Matches both the plain form (href="https://host/...") and the JSON-escaped form
@@ -133,9 +133,11 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
     base_url = "/" + "/".join(parts) + "/" if parts else "/"
 
     def is_absolute(url: str) -> bool:
+        """True for URLs that must not be rewritten (external or already absolute)."""
         return url.startswith(("http", "https", "//", "#", "data:", "javascript:", "/"))
 
     def resolve(url: str) -> str:
+        """Resolves a relative URL against the page's base path."""
         return url if is_absolute(url) else urljoin(base_url, url)
 
     def fix_chunk(chunk: str) -> str:
@@ -150,6 +152,7 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
 
         # srcset="url1 w1, url2 w2, ..."
         def fix_srcset(m: re.Match) -> str:
+            """Rewrites each candidate URL inside a srcset attribute to an absolute path."""
             q = m.group(1)
             entries = []
             for entry in m.group(2).split(","):
@@ -177,32 +180,12 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
     return "".join(fix_chunk(part) if i % 2 == 0 else part for i, part in enumerate(segments))
 
 
-def main():
-    if len(sys.argv) < 3:
-        print("usage: postprocess.py <OUTPUT_DIR> <ORIGIN_HOST> [<CDN_HOST> ...]", file=sys.stderr)
-        sys.exit(2)
+def _clean_html_files(output_dir: pathlib.Path, patterns: list) -> int:
+    """
+    Strips absolute URLs and CMS artifacts from HTML files and absolutizes relative links.
 
-    output_dir = pathlib.Path(sys.argv[1])
-    origin_host = sys.argv[2]
-    extra_hosts = sys.argv[3:]  # extra CDN domains whose absolute URLs will also be stripped
-
-    if not output_dir.is_dir():
-        print(f"directory does not exist: {output_dir}", file=sys.stderr)
-        sys.exit(2)
-
-    if extra_hosts:
-        print(f"[postprocess] stripping URLs from {len(extra_hosts)} extra CDN(s): {', '.join(extra_hosts)}")
-
-    # Step 1: normalize filenames with @ (wget's replacement for ? in query strings)
-    renames = normalize_query_string_files(output_dir)
-    if renames:
-        apply_renames_to_text_files(output_dir, renames)
-        print(f"[postprocess] {len(renames)} query-string file(s) renamed")
-        for old, new in renames:
-            print(f"[postprocess]   {old} → {new}")
-
-    # Step 2: strip absolute URLs and CMS artifacts from HTML and CSS files
-    patterns = build_patterns(origin_host, extra_hosts)
+    Returns the number of modified files.
+    """
     count = 0
 
     for html in output_dir.rglob("*.html"):
@@ -222,9 +205,19 @@ def main():
             count += 1
             print(f"[postprocess] cleaned: {html}")
 
-    # CSS files: strip origin/CDN domain URLs (e.g. url("https://origin/...") in @font-face,
-    # background-image, etc.). HTML-specific WordPress patterns are harmless on CSS — they
-    # won't match — so we reuse the same patterns list for simplicity.
+    return count
+
+
+def _clean_css_files(output_dir: pathlib.Path, patterns: list) -> int:
+    """
+    Strips origin/CDN domain URLs from CSS files (e.g. url("https://origin/...") in
+    @font-face, background-image, etc.). HTML-specific WordPress patterns are harmless
+    on CSS — they won't match — so we reuse the same patterns list for simplicity.
+
+    Returns the number of modified files.
+    """
+    count = 0
+
     for css in output_dir.rglob("*.css"):
         try:
             text = css.read_text(encoding="utf-8", errors="ignore")
@@ -240,6 +233,40 @@ def main():
             css.write_text(text, encoding="utf-8")
             count += 1
             print(f"[postprocess] cleaned: {css}")
+
+    return count
+
+
+def main():
+    """CLI entrypoint: normalize @ files, strip URLs/CMS artifacts, absolutize links."""
+    if len(sys.argv) < 3:
+        print("usage: postprocess.py <OUTPUT_DIR> <ORIGIN_HOST> [<CDN_HOST> ...]", file=sys.stderr)
+        sys.exit(2)
+
+    output_dir = pathlib.Path(sys.argv[1])
+    origin_host = sys.argv[2]
+    extra_hosts = sys.argv[3:]  # extra CDN domains whose absolute URLs will also be stripped
+
+    if not output_dir.is_dir():
+        print(f"directory does not exist: {output_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    if extra_hosts:
+        hosts = ", ".join(extra_hosts)
+        print(f"[postprocess] stripping URLs from {len(extra_hosts)} extra CDN(s): {hosts}")
+
+    # Step 1: normalize filenames with @ (wget's replacement for ? in query strings)
+    renames = normalize_query_string_files(output_dir)
+    if renames:
+        apply_renames_to_text_files(output_dir, renames)
+        print(f"[postprocess] {len(renames)} query-string file(s) renamed")
+        for old, new in renames:
+            print(f"[postprocess]   {old} → {new}")
+
+    # Step 2: strip absolute URLs and CMS artifacts from HTML and CSS files
+    patterns = build_patterns(origin_host, extra_hosts)
+    count = _clean_html_files(output_dir, patterns)
+    count += _clean_css_files(output_dir, patterns)
 
     print(f"[postprocess] {count} file(s) modified")
 
