@@ -51,6 +51,23 @@ def _make_workdir(post_id: int) -> pathlib.Path:
     return pathlib.Path(tempfile.mkdtemp(prefix=prefix))
 
 
+def _fetch(url: str, dest: pathlib.Path) -> bool:
+    """Downloads url into dest with wget; returns True on success (dest removed on failure)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(  # nosec B603
+        [
+            "/usr/bin/wget", "-q", "--timeout=30", "--tries=3",
+            "-O", str(dest), url,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    dest.unlink(missing_ok=True)
+    return False
+
+
 def _safe_path(workdir: pathlib.Path, *parts: str) -> pathlib.Path | None:
     """Joins path parts and ensures the resolved result stays within workdir."""
     target = workdir.joinpath(*parts).resolve()
@@ -70,6 +87,12 @@ def url_to_prefix(url: str) -> str:
     https://staging.mysite.com/                ->  ''  (root)
     """
     return urlparse(url).path.strip("/")
+
+
+def _base_origin(url: str) -> str:
+    """Returns scheme://netloc for a URL (assets are fetched from the origin host)."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> int:
@@ -115,18 +138,11 @@ def download_dynamic_cdn_assets(workdir: pathlib.Path, extra_cdn: list[str]) -> 
             if local_path is None or local_path.exists():
                 continue
 
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(  # nosec B603
-                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), full_url],
-                capture_output=True,
-                check=False,
-            )
-            if result.returncode == 0:
+            if _fetch(full_url, local_path):
                 print(f"[job] dynamic CDN asset downloaded: {full_url}")
                 downloaded += 1
             else:
                 print(f"[job] warning: failed to download dynamic CDN asset {full_url}")
-                local_path.unlink(missing_ok=True)
 
     return downloaded
 
@@ -157,8 +173,7 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
     extracts hashed chunk filenames, and downloads any missing ones from the origin.
     Must be called BEFORE postprocess so the files are present for S3 upload.
     """
-    parsed = urlparse(origin_url)
-    base_origin = f"{parsed.scheme}://{parsed.netloc}"
+    base_origin = _base_origin(origin_url)
 
     seen: set[str] = set()
     downloaded = 0
@@ -189,19 +204,21 @@ def download_webpack_chunks(workdir: pathlib.Path, origin_url: str) -> int:
                 continue
             seen.add(chunk_url)
 
-            result = subprocess.run(  # nosec B603
-                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(safe_local), chunk_url],
-                capture_output=True,
-                check=False,
-            )
-            if result.returncode == 0:
+            if _fetch(chunk_url, safe_local):
                 print(f"[job] webpack chunk downloaded: {chunk_url}")
                 downloaded += 1
             else:
                 print(f"[job] warning: failed to download webpack chunk {chunk_url}")
-                local_path.unlink(missing_ok=True)
 
     return downloaded
+
+
+def _elementor_targets(text: str):
+    """Yields (asset_rel_path, version) for each AssetsLoader lib/ path found in text."""
+    for m in _ELEMENTOR_ASSET.finditer(text):
+        rel_stem, version = m.group(1), m.group(2)
+        ext = ".js" if ".js" in m.group(0) else ".css"
+        yield f"lib/{rel_stem}.min{ext}", version
 
 
 def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) -> int:
@@ -217,8 +234,7 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
     The file is saved with the clean name (no ?ver= query) since S3/CloudFront strips
     query strings when looking up objects.
     """
-    parsed = urlparse(origin_url)
-    base_origin = f"{parsed.scheme}://{parsed.netloc}"
+    base_origin = _base_origin(origin_url)
 
     seen: set[str] = set()
     downloaded = 0
@@ -239,10 +255,7 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
 
         assets_dir = js_file.parent.parent.relative_to(workdir)
 
-        for m in _ELEMENTOR_ASSET.finditer(text):
-            rel_stem, version = m.group(1), m.group(2)
-            ext = ".js" if ".js" in m.group(0) else ".css"
-            asset_rel = f"lib/{rel_stem}.min{ext}"
+        for asset_rel, version in _elementor_targets(text):
             local_path = _safe_path(workdir, assets_dir, asset_rel)
             asset_url = f"{base_origin}/{assets_dir}/{asset_rel}?ver={version}"
 
@@ -254,18 +267,11 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
                 continue
             seen.add(asset_url)
 
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(  # nosec B603
-                ["/usr/bin/wget", "-q", "--timeout=30", "--tries=3", "-O", str(local_path), asset_url],
-                capture_output=True,
-                check=False,
-            )
-            if result.returncode == 0:
+            if _fetch(asset_url, local_path):
                 print(f"[job] Elementor asset downloaded: {asset_url}")
                 downloaded += 1
             else:
                 print(f"[job] warning: failed to download Elementor asset {asset_url}")
-                local_path.unlink(missing_ok=True)
 
     return downloaded
 
@@ -283,6 +289,75 @@ def _build_opt_cmd(workdir: pathlib.Path, opts: dict) -> list[str]:
         if not opts.get(flag, True):
             cmd.append(arg)
     return cmd
+
+
+def _scrape(url: str, workdir: pathlib.Path, extra_cdn: list[str]) -> None:
+    """
+    Pipeline step 1: scrape the page into workdir with wget.
+
+    Also downloads CDN assets injected via JavaScript strings (createElement +
+    .href/.src = 'https://cdn/...'), which are invisible to wget. Must run before
+    postprocess so the files exist once URLs are rewritten to local paths.
+    """
+    print(f"[job] step 1/4: scraping {url}", flush=True)
+    scrape_cmd = ["bash", "/app/scrape.sh", url, str(workdir)]
+    if extra_cdn:
+        scrape_cmd.append(",".join(extra_cdn))
+    scrape = _run(scrape_cmd, timeout=300)
+    if scrape.returncode != 0:
+        raise RuntimeError(f"scrape failed (rc={scrape.returncode}):\n{scrape.stdout[-2000:]}")
+
+    if extra_cdn:
+        dyn = download_dynamic_cdn_assets(workdir, extra_cdn)
+        print(f"[job] {dyn} dynamic CDN asset(s) downloaded", flush=True)
+
+
+def _postprocess(workdir: pathlib.Path, hostname: str, url: str, extra_cdn: list[str]) -> None:
+    """
+    Pipeline steps 2/2b/2c: clean up HTML, then fetch runtime-only assets.
+
+    Strips absolute references to the origin host and each extra CDN. The webpack
+    and Elementor passes run AFTER postprocess so runtime files renamed by it
+    (e.g. webpack.runtime.min.js@ver=3.26.3 → .min.js) are found by the *.js glob.
+    """
+    print("[job] step 2/4: postprocessing HTML", flush=True)
+    postprocess = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
+    if postprocess.returncode != 0:
+        print("[job] warning: postprocess failed, continuing anyway", flush=True)
+
+    wc = download_webpack_chunks(workdir, url)
+    print(f"[job] {wc} webpack chunk(s) downloaded", flush=True)
+
+    ea = download_elementor_dynamic_assets(workdir, url)
+    print(f"[job] {ea} Elementor dynamic asset(s) downloaded", flush=True)
+
+
+def _deploy(
+    workdir: pathlib.Path,
+    hostname: str,
+    page_path: str,
+    cloudfront_distribution_id: str,
+) -> dict:
+    """
+    Pipeline steps 4/5: upload to S3 and invalidate CloudFront.
+
+    The top-level S3 prefix is the hostname, which isolates different sites in the
+    same bucket: workdir/blog/page/index.html → bucket/{hostname}/blog/page/index.html.
+    In production, set the Origin Path of each CloudFront distribution to "/{hostname}".
+    CloudFront distribution priority: payload value → CLOUDFRONT_DISTRIBUTION_ID env var.
+    """
+    print("[job] step 4/4: uploading to S3", flush=True)
+    bucket = os.environ["S3_BUCKET"]
+    uploaded = sync_to_s3(local_dir=workdir, bucket=bucket, prefix=hostname)
+    print(f"[job] {uploaded} file(s) uploaded to s3://{bucket}/{hostname}/")
+
+    dist_id = cloudfront_distribution_id or os.environ.get("CLOUDFRONT_DISTRIBUTION_ID", "")
+    invalidation_paths = [f"/{page_path}/*"] if page_path else ["/*"]
+    invalidation_id = invalidate_cloudfront(
+        distribution_id=dist_id,
+        paths=invalidation_paths,
+    )
+    return {"files_uploaded": uploaded, "invalidation_id": invalidation_id, "bucket": bucket}
 
 
 def deploy_page(
@@ -314,36 +389,8 @@ def deploy_page(
     print(f"[job] started: url={url} post_id={post_id} site={hostname} workdir={workdir}")
 
     try:
-        # 1. scrape
-        print(f"[job] step 1/4: scraping {url}", flush=True)
-        scrape_cmd = ["bash", "/app/scrape.sh", url, str(workdir)]
-        if extra_cdn:
-            scrape_cmd.append(",".join(extra_cdn))
-        scrape = _run(scrape_cmd, timeout=300)
-        if scrape.returncode != 0:
-            raise RuntimeError(f"scrape failed (rc={scrape.returncode}):\n{scrape.stdout[-2000:]}")
-
-        # 1b. CDN assets loaded via JS (createElement + .href/.src = 'https://cdn/...')
-        if extra_cdn:
-            dyn = download_dynamic_cdn_assets(workdir, extra_cdn)
-            print(f"[job] {dyn} dynamic CDN asset(s) downloaded", flush=True)
-
-        # 2. HTML cleanup — remove absolute references to origin host and each extra CDN
-        print("[job] step 2/4: postprocessing HTML", flush=True)
-        postprocess = _run(["python", "/app/postprocess.py", str(workdir), hostname] + extra_cdn)
-        if postprocess.returncode != 0:
-            print("[job] warning: postprocess failed, continuing anyway", flush=True)
-
-        # 2b. webpack lazy-loaded chunks — runs after postprocess so that webpack runtime
-        #     files have been renamed (e.g. webpack.runtime.min.js@ver=3.26.3 → .min.js)
-        #     and are found by the *.js glob used to detect chunk maps.
-        wc = download_webpack_chunks(workdir, url)
-        print(f"[job] {wc} webpack chunk(s) downloaded", flush=True)
-
-        # 2c. Elementor AssetsLoader assets (dialog.js, swiper.js, …) — loaded at runtime
-        #     via template literals; never appear as literal src= attributes in HTML.
-        ea = download_elementor_dynamic_assets(workdir, url)
-        print(f"[job] {ea} Elementor dynamic asset(s) downloaded", flush=True)
+        _scrape(url, workdir, extra_cdn)
+        _postprocess(workdir, hostname, url, extra_cdn)
 
         # 3. optimization (CSS/JS bundle + minification)
         print("[job] step 3/4: optimizing assets", flush=True)
@@ -351,24 +398,7 @@ def deploy_page(
         if opt.returncode != 0:
             print("[job] warning: optimize failed, continuing anyway", flush=True)
 
-        # 4. S3 upload
-        print("[job] step 4/4: uploading to S3", flush=True)
-        # Top-level prefix = hostname → isolates different sites in the same bucket:
-        #   workdir/blog/page/index.html → bucket/{hostname}/blog/page/index.html
-        #   workdir/assets/style.css     → bucket/{hostname}/assets/style.css
-        # In production, set the Origin Path of each CloudFront distribution to "/{hostname}".
-        bucket = os.environ["S3_BUCKET"]
-        uploaded = sync_to_s3(local_dir=workdir, bucket=bucket, prefix=hostname)
-        print(f"[job] {uploaded} file(s) uploaded to s3://{bucket}/{hostname}/")
-
-        # 5. CloudFront invalidation
-        # Priority: cloudfront_distribution_id from payload → CLOUDFRONT_DISTRIBUTION_ID env var
-        dist_id = cloudfront_distribution_id or os.environ.get("CLOUDFRONT_DISTRIBUTION_ID", "")
-        invalidation_paths = [f"/{page_path}/*"] if page_path else ["/*"]
-        invalidation_id = invalidate_cloudfront(
-            distribution_id=dist_id,
-            paths=invalidation_paths,
-        )
+        deploy_result = _deploy(workdir, hostname, page_path, cloudfront_distribution_id)
 
         result = {
             "ok": True,
@@ -376,14 +406,12 @@ def deploy_page(
             "post_id": post_id,
             "site": hostname,
             "prefix": page_path or "/",
-            "files_uploaded": uploaded,
-            "invalidation_id": invalidation_id,
-            "bucket": bucket,
+            **deploy_result,
         }
         print(f"[job] OK: {result}")
         return result
 
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("scrape timed out (300s)")
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("scrape timed out (300s)") from exc
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

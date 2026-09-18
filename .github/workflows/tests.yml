@@ -28,6 +28,11 @@ jobs:
           pip install -r worker/requirements.txt
           pip install -r tests/requirements.txt
 
+      - name: Lint with pylint
+        run: |
+          pip install "pylint==3.3.*"
+          pylint api worker tests
+
       - name: Run tests
         run: |
           pytest tests/ -v \

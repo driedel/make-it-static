@@ -44,7 +44,9 @@ def test_run_command_timeout():
 def test_convert_fonts_skips_without_fonttools(monkeypatch, tmp_path):
     """When fontTools is not importable, _convert_fonts returns 0."""
     original_import = __builtins__["__import__"]
+
     def fake_import(name, *args, **kwargs):
+        """Simulates fontTools.ttLib being unavailable by raising ImportError."""
         if name == "fontTools.ttLib":
             raise ImportError()
         return original_import(name, *args, **kwargs)
@@ -121,7 +123,9 @@ def test_convert_fonts_skips_existing_woff2(tmp_path):
 def test_convert_images_skips_without_pillow(monkeypatch, tmp_path):
     """When Pillow is not importable, _convert_images returns 0."""
     original_import = __builtins__["__import__"]
+
     def fake_import(name, *args, **kwargs):
+        """Simulates PIL.Image being unavailable by raising ImportError."""
         if name == "PIL.Image":
             raise ImportError()
         return original_import(name, *args, **kwargs)
@@ -264,7 +268,8 @@ def test_sync_to_s3_uploads_with_correct_content_type(tmp_path):
 
     # Check JS cache (macOS mimetypes may report text/javascript)
     js_call = [c for c in mock_s3.upload_file.call_args_list if "script.js" in str(c)][0]
-    assert js_call.kwargs["ExtraArgs"]["ContentType"] in ("application/javascript", "text/javascript")
+    js_types = ("application/javascript", "text/javascript")
+    assert js_call.kwargs["ExtraArgs"]["ContentType"] in js_types
 
 
 def test_sync_to_s3_empty_prefix(tmp_path):

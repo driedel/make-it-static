@@ -35,6 +35,7 @@ def _rewrite_css_urls(css_content: str, css_path: Path, bundle_path: Path, root:
     bundle_dir = bundle_path.parent.resolve()
 
     def rewrite(match):
+        """Rewrites a single url() match to be relative to the bundle's location."""
         raw = match.group(1).strip()
         if (raw.startswith('"') and raw.endswith('"')) or (
             raw.startswith("'") and raw.endswith("'")
@@ -86,7 +87,27 @@ def _update_refs(
                 if new_text != text:
                     fpath.write_text(new_text, encoding="utf-8")
             except OSError as exc:
-                print(f"[optimize] warning: could not update refs in {fpath}: {exc}", file=sys.stderr)
+                print(
+                    f"[optimize] warning: could not update refs in {fpath}: {exc}",
+                    file=sys.stderr,
+                )
+
+
+def _fix_css_format_hints(root: Path, new_name: str, fmt_hint: re.Pattern) -> None:
+    """Rewrites truetype/opentype format() hints to woff2 in CSS referencing new_name."""
+    for css_path in root.rglob("*.css"):
+        try:
+            css = css_path.read_text(encoding="utf-8", errors="ignore")
+            if new_name not in css:
+                continue
+            fixed = fmt_hint.sub("format('woff2')", css)
+            if fixed != css:
+                css_path.write_text(fixed, encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"[optimize] warning: could not update format hint in {css_path}: {exc}",
+                file=sys.stderr,
+            )
 
 
 def _convert_fonts(root: Path) -> int:
@@ -94,7 +115,10 @@ def _convert_fonts(root: Path) -> int:
     try:
         from fontTools.ttLib import TTFont
     except ImportError:
-        print("[optimize] warning: fonttools not installed — font conversion skipped", file=sys.stderr)
+        print(
+            "[optimize] warning: fonttools not installed — font conversion skipped",
+            file=sys.stderr,
+        )
         return 0
 
     fmt_hint = re.compile(r"""format\(\s*['"](?:truetype|opentype)['"]\s*\)""", re.IGNORECASE)
@@ -116,16 +140,7 @@ def _convert_fonts(root: Path) -> int:
                 _update_refs(root, old_name, new_name, (".css", ".html"))
 
                 # Fix format() hint only in CSS that already references the new woff2
-                for css_path in root.rglob("*.css"):
-                    try:
-                        css = css_path.read_text(encoding="utf-8", errors="ignore")
-                        if new_name not in css:
-                            continue
-                        fixed = fmt_hint.sub("format('woff2')", css)
-                        if fixed != css:
-                            css_path.write_text(fixed, encoding="utf-8")
-                    except OSError as exc:
-                        print(f"[optimize] warning: could not update format hint in {css_path}: {exc}", file=sys.stderr)
+                _fix_css_format_hints(root, new_name, fmt_hint)
 
                 converted += 1
                 print(f"[optimize] font: {old_name} → {new_name}")
@@ -135,12 +150,30 @@ def _convert_fonts(root: Path) -> int:
     return converted
 
 
+def _save_as_modern_format(img, img_path: Path) -> tuple[Path, str] | None:
+    """Saves img as AVIF, falling back to WebP; returns (new path, format label) or None."""
+    for suffix, fmt, save_kw in [
+        (".avif", "AVIF", {"quality": 75}),
+        (".webp", "WEBP", {"quality": 80, "method": 6}),
+    ]:
+        candidate = img_path.with_suffix(suffix)
+        try:
+            img.save(str(candidate), fmt, **save_kw)
+            return candidate, fmt
+        except Exception:
+            candidate.unlink(missing_ok=True)
+    return None
+
+
 def _convert_images(root: Path) -> int:
     """Converts raster images to AVIF (or WebP as fallback) and updates references."""
     try:
         from PIL import Image
     except ImportError:
-        print("[optimize] warning: Pillow not installed — image conversion skipped", file=sys.stderr)
+        print(
+            "[optimize] warning: Pillow not installed — image conversion skipped",
+            file=sys.stderr,
+        )
         return 0
 
     raster_globs = ("*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.tiff", "*.tif")
@@ -162,27 +195,13 @@ def _convert_images(root: Path) -> int:
                     elif img.mode not in ("RGB", "RGBA", "L", "LA"):
                         img = img.convert("RGB")
 
-                    new_path = None
-                    fmt_label = None
+                    saved = _save_as_modern_format(img, img_path)
 
-                    # Try AVIF; fall back to WebP if unsupported
-                    for suffix, fmt, save_kw in [
-                        (".avif", "AVIF", {"quality": 75}),
-                        (".webp", "WEBP", {"quality": 80, "method": 6}),
-                    ]:
-                        candidate = img_path.with_suffix(suffix)
-                        try:
-                            img.save(str(candidate), fmt, **save_kw)
-                            new_path = candidate
-                            fmt_label = fmt
-                            break
-                        except Exception:
-                            candidate.unlink(missing_ok=True)
-
-                if new_path is None:
+                if saved is None:
                     print(f"[optimize] warning: could not convert {old_name}", file=sys.stderr)
                     continue
 
+                new_path, fmt_label = saved
                 img_path.unlink()
                 new_name = new_path.name
                 _update_refs(root, old_name, new_name, ref_exts)
@@ -203,6 +222,19 @@ def _resolve_asset(ref: str, html_dir: Path, root: Path) -> Path:
     return (html_dir / clean).resolve()
 
 
+def _find_local_assets(tags, attr: str, html_dir: Path, root: Path) -> list:
+    """Collects (tag, absolute path) pairs for tags whose attr references an existing local file."""
+    local = []
+    for tag in tags:
+        ref = tag.get(attr, "")
+        if not ref or ref.startswith(("http://", "https://", "//", "data:")):
+            continue
+        abs_path = _resolve_asset(ref, html_dir, root)
+        if abs_path.exists() and abs_path.is_file():
+            local.append((tag, abs_path))
+    return local
+
+
 def _bundle_css(html_path: Path, soup: BeautifulSoup, root: Path) -> int:
     """
     Bundles local CSS files into a single minified bundle and updates the HTML.
@@ -210,15 +242,7 @@ def _bundle_css(html_path: Path, soup: BeautifulSoup, root: Path) -> int:
     """
     html_dir = html_path.parent
     link_tags = soup.find_all("link", rel="stylesheet")
-
-    local = []
-    for tag in link_tags:
-        href = tag.get("href", "")
-        if not href or href.startswith(("http://", "https://", "//", "data:")):
-            continue
-        abs_path = _resolve_asset(href, html_dir, root)
-        if abs_path.exists() and abs_path.is_file():
-            local.append((tag, abs_path))
+    local = _find_local_assets(link_tags, "href", html_dir, root)
 
     if not local:
         return 0
@@ -276,17 +300,12 @@ def _bundle_js(html_path: Path, soup: BeautifulSoup, root: Path) -> int:
     html_dir = html_path.parent
     script_tags = soup.find_all("script", src=True)
 
-    local = []
-    for tag in script_tags:
-        # ES modules use import/export and cannot be naively concatenated
-        if tag.get("type") in ("module", "text/javascript;module"):
-            continue
-        src = tag.get("src", "")
-        if not src or src.startswith(("http://", "https://", "//", "data:")):
-            continue
-        abs_path = _resolve_asset(src, html_dir, root)
-        if abs_path.exists() and abs_path.is_file():
-            local.append((tag, abs_path))
+    # ES modules use import/export and cannot be naively concatenated
+    concatenable = [
+        tag for tag in script_tags
+        if tag.get("type") not in ("module", "text/javascript;module")
+    ]
+    local = _find_local_assets(concatenable, "src", html_dir, root)
 
     if not local:
         return 0
@@ -390,6 +409,7 @@ def optimize_directory(  # pylint: disable=too-many-arguments,too-many-positiona
 
 
 def main():
+    """CLI entrypoint: parses --no-* flags and runs optimize_directory()."""
     parser = argparse.ArgumentParser(description="Optimize static site assets")
     parser.add_argument("output_dir")
     parser.add_argument("--no-bundle-css",      dest="bundle_css",      action="store_false")

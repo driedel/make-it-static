@@ -40,6 +40,7 @@ def _s3_client():
 
 
 def cache_control_for(path: pathlib.Path) -> str:
+    """Returns the Cache-Control header for a path based on its extension (HTML vs. assets)."""
     ext = path.suffix.lower()
     if ext in (".html", ".htm"):
         return "public, max-age=60, s-maxage=300"
@@ -53,6 +54,7 @@ def cache_control_for(path: pathlib.Path) -> str:
 
 
 def content_type_for(path: pathlib.Path) -> str:
+    """Returns the Content-Type for a path, using the EXTRA_TYPES table before mimetypes."""
     ext = path.suffix.lower()
     if ext in EXTRA_TYPES:
         return EXTRA_TYPES[ext]
@@ -61,6 +63,7 @@ def content_type_for(path: pathlib.Path) -> str:
 
 
 def sync_to_s3(local_dir: pathlib.Path, bucket: str, prefix: str) -> int:
+    """Uploads every file under local_dir to s3://{bucket}/{prefix}/ with correct headers."""
     s3 = _s3_client()
     count = 0
 
@@ -86,6 +89,7 @@ def sync_to_s3(local_dir: pathlib.Path, bucket: str, prefix: str) -> int:
 
 
 def invalidate_cloudfront(distribution_id: str, paths: list[str]) -> str | None:
+    """Creates a CloudFront invalidation for the given paths; None if no distribution is set."""
     if not distribution_id:
         print("[deploy] CLOUDFRONT_DISTRIBUTION_ID not set — skipping invalidation")
         return None
