@@ -175,8 +175,10 @@ def absolutize_html_urls(text: str, html_path: pathlib.Path, output_dir: pathlib
         return chunk
 
     # Split on <script> blocks so JS string contents (e.g. template literals with
-    # href="${expr}") are not mistaken for relative HTML attribute URLs.
-    segments = re.split(r'(<script[\s\S]*?</script>)', text, flags=re.IGNORECASE)
+    # href="${expr}") are not mistaken for relative HTML attribute URLs. The end tag
+    # pattern tolerates whitespace/attributes (</script >) so malformed HTML still
+    # ends the block (CodeQL py/bad-tag-filter).
+    segments = re.split(r'(<script\b[\s\S]*?</script[^>]*>)', text, flags=re.IGNORECASE)
     return "".join(fix_chunk(part) if i % 2 == 0 else part for i, part in enumerate(segments))
 
 

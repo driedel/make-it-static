@@ -332,3 +332,20 @@ def test_absolutize_does_not_rewrite_href_inside_script(tmp_path):
     assert 'href="${slide.btnLink}"' in result
     # Real HTML relative link must be absolutized
     assert 'href="/consultoria/aplicacao/page.html"' in result
+
+
+def test_absolutize_script_end_tag_with_space_still_splits(tmp_path):
+    """Malformed closing tags like </script > still end the script block."""
+    html_path = tmp_path / "index.html"
+    html_path.touch()
+    html = (
+        '<script>'
+        '`<a href="${slide.btnLink}">watch</a>`'
+        '</script >'
+        '<a href="page.html">real link</a>'
+    )
+    result = absolutize_html_urls(html, html_path, tmp_path)
+    # JS template expression must be unchanged
+    assert 'href="${slide.btnLink}"' in result
+    # Real HTML relative link after </script > must be absolutized
+    assert 'href="/page.html"' in result
