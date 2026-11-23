@@ -6,7 +6,7 @@
 # resolution for site-packages) so pylint can resolve those imports.
 
 [MAIN]
-py-version = 3.12
+py-version = 3.14
 init-hook = 'import sys, os; sys.path[:0] = [os.path.join(os.getcwd(), "api"), os.path.join(os.getcwd(), "worker")]'
 
 # Use multiple processes to speed up Pylint (0 = auto-detect, capped at 4).
