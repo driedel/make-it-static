@@ -11,10 +11,10 @@ This file is written for AI coding agents. It assumes no prior knowledge of the 
 docker network create make-it-static-network   # REQUIRED — compose won't create it
 cp .env.example .env
 
-# Start dev (API + Worker + Redis + MinIO + nginx preview)
+# Start dev (API + Worker + Redis + LocalStack + nginx preview)
 docker compose up --build
 
-# Start prod (no MinIO)
+# Start prod (no LocalStack)
 docker compose -f docker-compose.prod.yml up -d --build
 
 # Run tests inside a temporary container (worker image does not include api/ or tests/)
@@ -40,21 +40,21 @@ docker compose logs -f worker
 
 ## Project overview
 
-**Make it Static** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or MinIO) with an optional CloudFront invalidation.
+**Make it Static** is a webhook-driven service that captures a rendered web page, turns it into a static site, optimizes the assets, and uploads the result to S3 (real AWS S3 or LocalStack in dev) with an optional CloudFront invalidation.
 
 A client sends a signed `POST /publish` request with a URL and a `post_id`. The API validates the HMAC signature, enqueues a job in Redis, and an RQ worker executes the pipeline asynchronously.
 
 ## Technology stack
 
-- **API**: Python 3.12, FastAPI 0.115, Uvicorn, Redis, RQ
-- **Worker**: Python 3.12, RQ, boto3, BeautifulSoup 4, rcssmin, rjsmin, minify-html, fonttools, Pillow
+- **API**: Python 3.14, FastAPI 0.165, Uvicorn, Redis, RQ
+- **Worker**: Python 3.14, RQ, boto3, BeautifulSoup 4, rcssmin, rjsmin, minify-html, fonttools, Pillow
 - **External tools inside the worker container**: `wget` (website scraping)
 - **Queue / cache**: Redis 7
-- **Object storage (dev)**: MinIO (S3-compatible)
+- **Object storage (dev)**: LocalStack (S3-compatible, pinned image `localstack/localstack:4.6.0`)
 - **Static preview (dev)**: nginx with an `envsubst`-processed template
 - **Container runtime**: Docker / Docker Compose v2
 - **CI / CD**: GitHub Actions (pytest + pylint, CodeQL security scan, optional EC2 deploy)
-- **Target Python version**: 3.12 (the Docker images use `python:3.12-slim`)
+- **Target Python version**: 3.14 (the Docker images use `python:3.14-slim`)
 
 ## Repository layout
 
@@ -63,7 +63,7 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 ├── api/
 │   ├── main.py              # FastAPI application
 │   ├── requirements.txt     # API Python dependencies
-│   └── Dockerfile           # python:3.12-slim image
+│   └── Dockerfile           # python:3.14-slim image
 ├── worker/
 │   ├── worker.py            # RQ worker entrypoint
 │   ├── jobs.py              # Pipeline orchestration (deploy_page)
@@ -72,7 +72,7 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 │   ├── optimize.py          # CSS/JS bundling + minification, image/font conversion
 │   ├── deploy.py            # S3 upload + CloudFront invalidation
 │   ├── requirements.txt     # Worker Python dependencies
-│   └── Dockerfile           # python:3.12-slim + wget image
+│   └── Dockerfile           # python:3.14-slim + wget image
 ├── tests/
 │   ├── conftest.py          # pytest path setup and default env vars
 │   ├── test_api.py          # FastAPI endpoint tests
@@ -83,11 +83,13 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 │   └── requirements.txt     # Test dependencies
 ├── nginx/
 │   └── default.conf.template # Local preview nginx config
+├── localstack/
+│   └── init-s3.sh           # Dev: creates the S3 bucket + anonymous-read policy at container startup
 ├── .github/workflows/
 │   ├── tests.yml            # pytest + pylint on push / PR
 │   ├── codeql.yml           # CodeQL security scan
 │   └── deploy.yml           # Manual EC2 deploy workflow
-├── docker-compose.yml             # Dev stack with Redis + API + Worker + MinIO + nginx preview
+├── docker-compose.yml             # Dev stack with Redis + API + Worker + LocalStack + nginx preview
 ├── docker-compose.prod.yml        # Production stack with Redis + API + Worker only
 ├── docker-compose.wordpress.yml   # Example for adding the service to a WordPress project
 ├── .env.example                   # Environment variable template
@@ -134,12 +136,12 @@ Copy `.env.example` to `.env` and adjust:
 | `HMAC_SECRET` | Shared secret for signing webhook requests. Generate in production with `openssl rand -hex 32`. |
 | `HMAC_MAX_SKEW` | Replay tolerance in seconds (default 300). |
 | `REDIS_URL` | Redis connection URL, e.g. `redis://redis:6379/0`. |
-| `AWS_ACCESS_KEY_ID` | AWS key; also used as MinIO root user in dev. |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret; also used as MinIO root password in dev. |
+| `AWS_ACCESS_KEY_ID` | AWS key. In dev any value works — LocalStack accepts any credentials. |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret. In dev any value works — LocalStack accepts any credentials. |
 | `AWS_REGION` | AWS region (e.g. `us-east-1`). |
 | `S3_BUCKET` | Target S3 bucket name. |
 | `S3_ENDPOINT_URL` | Custom S3 endpoint. Leave empty + set `S3_USE_PATH_STYLE=false` for real AWS. |
-| `S3_USE_PATH_STYLE` | `true` for MinIO, `false` for AWS virtual-hosted style. |
+| `S3_USE_PATH_STYLE` | `true` for LocalStack in dev, `false` for AWS virtual-hosted style. |
 | `CLOUDFRONT_DISTRIBUTION_ID` | Global fallback distribution for invalidation. Optional per-request override via payload. |
 | `CORS_ORIGINS` | Comma-separated list of allowed CORS origins. Defaults to `*` in dev. Restrict in production. |
 | `ORIGIN_HOST` | **Local preview only** — hostname used by the dev nginx rewrite. |
@@ -172,12 +174,11 @@ Copy `.env.example` to `.env` and adjust:
 Dev services:
 - API: http://localhost:8123
 - Local static preview: http://localhost:8080
-- MinIO console: http://localhost:9001 (login `minioadmin` / `minioadmin` unless changed)
-- MinIO S3 API: http://localhost:9000
+- LocalStack S3 API: http://localhost:4566 (bucket auto-created at startup; inspect objects with `docker compose exec localstack awslocal s3 ls s3://<bucket> --recursive`)
 
 ### Production
 
-Use `docker-compose.prod.yml` (no MinIO, API bound to localhost, TLS handled by Caddy/nginx/ALB):
+Use `docker-compose.prod.yml` (no LocalStack, API bound to localhost, TLS handled by Caddy/nginx/ALB):
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
@@ -235,7 +236,9 @@ The tests mock Redis/RQ and do **not** require a running Redis or Docker stack f
 - Filename normalization, URL rewriting, and HTML absolutization (`test_postprocess.py`)
 - S3 upload, CloudFront invalidation, font/image conversion, and subprocess behavior (`test_integration.py`)
 
-The worker container uses **Python 3.12**, which is the target version for this project. Running tests inside Docker avoids host interpreter issues.
+The worker container uses **Python 3.14**, which is the target version for this project. Running tests inside Docker avoids host interpreter issues.
+
+`httpx2` in `tests/requirements.txt` is Pydantic's maintained successor of `httpx` (used by starlette's TestClient), so leave it as-is — do not "fix" it back to `httpx`.
 
 ## Code style and conventions
 
@@ -281,7 +284,7 @@ signature or attribution (e.g., no "Generated by ...", "Signed-off-by AI",
   - URL hostname is not an internal/loopback/link-local/reserved IP address
 - `scrape.sh` rejects WordPress admin, REST, feeds, pagination, search, and attachment URLs via `--reject-regex`.
 - Google Fonts domains are excluded from scraping because the CSS is User-Agent-specific; those links remain external and load from Google at runtime.
-- AWS credentials in dev are reused as MinIO credentials. Change them before exposing MinIO.
+- LocalStack accepts any credentials in dev; the `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars are passed to boto3 but ignored by LocalStack.
 - The production deploy workflow uses `environment: production` and manual trigger by default.
 - Never commit security scan reports (e.g. `bandit-report.txt`, `pip-audit-*.json`) or private audit documents (e.g. `SECURITY_AUDIT.md`). Run scans inside Docker and keep reports local/private.
 
@@ -302,7 +305,7 @@ The workflow runs tests, rsyncs the repository to `/opt/make-it-static/` on the 
 - **HMAC auth**: All `/publish` requests require `X-Signature` (hex HMAC-SHA256 of raw body) and `X-Timestamp` headers. Replay window: 300s (configurable via `HMAC_MAX_SKEW`).
 - **CORS**: Open (`*`) in dev. Restrict in production via `CORS_ORIGINS`.
 - **`.env` is gitignored**. Always copy from `.env.example` first.
-- **Dev uses MinIO** at `http://minio:9000` with path-style URLs. Prod: leave `S3_ENDPOINT_URL` empty, set `S3_USE_PATH_STYLE=false`.
+- **Dev uses LocalStack** at `http://localstack:4566` with path-style URLs; the bucket named by `S3_BUCKET` is created automatically at container startup (with an anonymous-read policy) by `localstack/init-s3.sh`, mounted at `/etc/localstack/init/ready.d/`. Prod: leave `S3_ENDPOINT_URL` empty, set `S3_USE_PATH_STYLE=false`.
 - **Deploy workflow** (`.github/workflows/deploy.yml`) is manual-only (`workflow_dispatch`). Tests must pass before deploy.
 
 ## CI workflows

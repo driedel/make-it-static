@@ -37,7 +37,7 @@ Client (any HTTP client, CMS plugin, CI/CD, etc.)
 - **API** (FastAPI): receives webhook, validates HMAC, enqueues job. Endpoints: `POST /publish`, `GET /jobs/{id}`, `DELETE /jobs/{id}`, `GET /health`.
 - **Worker** (RQ): consumes the queue and runs the full pipeline.
 - **Redis**: job queue.
-- **MinIO** (dev only): local S3 replacement.
+- **LocalStack** (dev only): local S3 replacement (S3 API on port 4566; bucket auto-created at startup).
 
 ---
 
@@ -54,7 +54,7 @@ Client (any HTTP client, CMS plugin, CI/CD, etc.)
 cp .env.example .env
 ```
 
-`.env.example` is already pre-configured to run with MinIO. No AWS credentials are needed in dev. The only field you may want to adjust is `ORIGIN_HOST` — it defines which hostname is stripped from URLs in the HTML:
+`.env.example` is already pre-configured to run with LocalStack. No AWS credentials are needed in dev. The only field you may want to adjust is `ORIGIN_HOST` — it defines which hostname is stripped from URLs in the HTML:
 
 ```bash
 # .env
@@ -73,7 +73,7 @@ Wait for the images to build on the first run. When ready you will see:
 ```
 worker-1     | RQ Worker started. Waiting for jobs in queue 'deploys'...
 api-1        | INFO:     Application startup complete.
-minio-init-1 | Bucket ready.
+localstack-1 | Bucket ready.
 ```
 
 Available services:
@@ -82,8 +82,7 @@ Available services:
 |---------|---------|
 | API | http://localhost:8123 |
 | Site preview | http://localhost:8080 |
-| MinIO console | http://localhost:9001 (login: `minioadmin` / `minioadmin`) |
-| MinIO S3 API | http://localhost:9000 |
+| LocalStack S3 API | http://localhost:4566 |
 
 ### 3. Check API health
 
@@ -145,13 +144,10 @@ While the worker is processing, the status will be `started`. When finished:
 
 ### Step 3 — View the published files
 
-Access the MinIO console at http://localhost:9001/browser/my-static-site and browse the bucket. Files appear replicating the URL path structure.
-
-Or via CLI:
+The dev S3 (LocalStack) has no web console — inspect the bucket with `awslocal` inside the container. Files appear replicating the URL path structure:
 
 ```bash
-# list files in the bucket
-docker compose exec minio mc ls local/my-static-site --recursive
+docker compose exec localstack awslocal s3 ls s3://my-static-site --recursive
 ```
 
 ### Follow worker logs in real time
@@ -176,7 +172,7 @@ You will see each pipeline step:
 
 ## Running in production (real S3 + CloudFront)
 
-1. Use `docker-compose.prod.yml` (without MinIO):
+1. Use `docker-compose.prod.yml` (without the local S3 stack):
 
    ```bash
    docker compose -f docker-compose.prod.yml up -d
@@ -222,13 +218,13 @@ You can add them to an existing Docker Compose project (for example, alongside W
    # HMAC secret shared with the WordPress plugin
    MAKE_IT_STATIC_HMAC_SECRET=$(openssl rand -hex 32)
 
-   # S3 / MinIO credentials
+   # S3 credentials
    AWS_ACCESS_KEY_ID=...
    AWS_SECRET_ACCESS_KEY=...
    AWS_REGION=us-east-1
    S3_BUCKET=...
    S3_ENDPOINT_URL=              # leave empty for real AWS
-   S3_USE_PATH_STYLE=false       # true for MinIO, false for AWS
+   S3_USE_PATH_STYLE=false       # true for LocalStack (dev), false for AWS
 
    # Optional
    CLOUDFRONT_DISTRIBUTION_ID=...
@@ -257,8 +253,8 @@ You can add them to an existing Docker Compose project (for example, alongside W
 | `AWS_SECRET_ACCESS_KEY` | S3 secret key. |
 | `AWS_REGION` | AWS region (e.g. `us-east-1`). |
 | `S3_BUCKET` | Target S3 bucket. |
-| `S3_ENDPOINT_URL` | Custom endpoint. Leave empty for AWS. Use `http://minio:9000` for MinIO. |
-| `S3_USE_PATH_STYLE` | `true` for MinIO, `false` for AWS. |
+| `S3_ENDPOINT_URL` | Custom endpoint. Leave empty for AWS. Use `http://localstack:4566` for a local LocalStack dev stack. |
+| `S3_USE_PATH_STYLE` | `true` for LocalStack, `false` for AWS. |
 
 ### Optional environment variables
 
@@ -570,8 +566,8 @@ pm.request.headers.add({ key: "Content-Type", value: "application/json" });
 
 ```
 make-it-static/
-├── docker-compose.yml             # dev (with MinIO)
-├── docker-compose.prod.yml        # prod (without MinIO)
+├── docker-compose.yml             # dev (with LocalStack)
+├── docker-compose.prod.yml        # prod (without LocalStack)
 ├── docker-compose.wordpress.yml   # example for WordPress integration
 ├── .env.example
 ├── IAM_POLICY.json             # minimum IAM policy for the AWS key
