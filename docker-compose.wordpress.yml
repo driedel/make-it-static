@@ -10,12 +10,12 @@
 #
 # Required environment variables:
 #   HMAC_SECRET              — shared secret between plugin and API
-#   AWS_ACCESS_KEY_ID        — S3/MinIO access key
-#   AWS_SECRET_ACCESS_KEY    — S3/MinIO secret key
+#   AWS_ACCESS_KEY_ID        — S3 access key
+#   AWS_SECRET_ACCESS_KEY    — S3 secret key
 #   AWS_REGION               — e.g. us-east-1
 #   S3_BUCKET                — target bucket name
-#   S3_ENDPOINT_URL          — empty for real AWS; e.g. http://minio:9000 for MinIO
-#   S3_USE_PATH_STYLE        — true for MinIO; false for AWS
+#   S3_ENDPOINT_URL          — empty for real AWS; e.g. http://localstack:4566 for a local LocalStack dev stack
+#   S3_USE_PATH_STYLE        — true for LocalStack; false for AWS
 #
 # Optional:
 #   CLOUDFRONT_DISTRIBUTION_ID — default CloudFront distribution to invalidate

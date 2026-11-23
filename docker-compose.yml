@@ -23,57 +23,40 @@ services:
     env_file: .env
     depends_on:
       - redis
-      - minio
+      - localstack
     networks:
       - default
       - make-it-static-network
 
   # ---- Local S3 for testing (remove in prod) ----
-  minio:
-    image: minio/minio:latest
+  localstack:
+    image: localstack/localstack:4.6.0
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+      SERVICES: s3
+      EAGER_SERVICE_LOADING: "1"
     env_file: .env
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "4566:4566"
     volumes:
-      - minio-data:/data
+      - localstack-data:/var/lib/localstack
+      - ./localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
 
   # ---- Local static site preview (mirrors CloudFront) ----
   preview:
-    image: nginx:alpine
+    image: nginx:1.30-alpine
     restart: unless-stopped
     depends_on:
-      - minio
-      - minio-init
+      - localstack
     ports:
       - "8080:80"
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     env_file: .env
 
-  # automatically creates the bucket on startup
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      - minio
-    env_file: .env
-    entrypoint: >
-      /bin/sh -c "
-      sleep 3 &&
-      mc alias set local http://minio:9000 $${AWS_ACCESS_KEY_ID} $${AWS_SECRET_ACCESS_KEY} &&
-      mc mb -p local/$${S3_BUCKET} || true &&
-      mc anonymous set download local/$${S3_BUCKET} &&
-      echo 'Bucket ready.'
-      "
-
 volumes:
   redis-data:
-  minio-data:
+  localstack-data:
 
 networks:
   make-it-static-network:

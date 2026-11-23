@@ -14,7 +14,7 @@ server {
         rewrite ^([^.]+)$ /${S3_BUCKET}/${ORIGIN_HOST}$1/index.html break;
         rewrite ^(.*)$ /${S3_BUCKET}/${ORIGIN_HOST}$1 break;
 
-        proxy_pass http://minio:9000/;
-        proxy_set_header Host minio:9000;
+        proxy_pass http://localstack:4566/;
+        proxy_set_header Host localstack:4566;
     }
 }
