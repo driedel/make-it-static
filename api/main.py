@@ -35,10 +35,12 @@ def _validate_url(url: str) -> None:
     if not parsed.hostname:
         raise HTTPException(status_code=400, detail="url must have a valid hostname")
 
-    # Reject literal internal IP addresses
+    # Reject any non-public IP literal. is_global covers private/loopback/
+    # link-local/reserved space and also 100.64.0.0/10 (CGNAT), which newer
+    # ipaddress versions classify as neither private nor reserved.
     try:
         addr = ipaddress.ip_address(parsed.hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        if not addr.is_global:
             raise HTTPException(status_code=400, detail="url must not use internal IP addresses")
     except ValueError:
         pass  # It's a domain name, not an IP literal
