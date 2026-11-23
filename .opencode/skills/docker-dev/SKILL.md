@@ -15,7 +15,7 @@ docker network create make-it-static-network
 cp .env.example .env
 ```
 
-## Dev environment (with MinIO)
+## Dev environment (with LocalStack)
 
 ```bash
 docker compose up --build
@@ -25,9 +25,8 @@ Services:
 | Service | Address | Notes |
 |---------|---------|-------|
 | API | http://localhost:8123 | FastAPI on port 8123 |
-| Site preview | http://localhost:8080 | nginx serving from MinIO |
-| MinIO console | http://localhost:9001 | login: `minioadmin` / `minioadmin` |
-| MinIO S3 API | http://localhost:9000 | Path-style URLs |
+| Site preview | http://localhost:8080 | nginx proxying to LocalStack |
+| LocalStack S3 API | http://localhost:4566 | Path-style URLs; bucket auto-created at startup |
 
 ### Verify it's working
 ```bash
@@ -41,10 +40,9 @@ docker compose logs -f worker
 ```
 
 ### Browse uploaded files
+The dev S3 (LocalStack) has no web console — use `awslocal` inside the container:
 ```bash
-# Via MinIO console: http://localhost:9001/browser/my-static-site
-# Or CLI:
-docker compose exec minio mc ls local/my-static-site --recursive
+docker compose exec localstack awslocal s3 ls s3://my-static-site --recursive
 ```
 
 ## Production environment (real S3 + CloudFront)
@@ -54,7 +52,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Differences from dev:
-- **No MinIO** — uses real AWS S3.
+- **No LocalStack** — uses real AWS S3.
 - **No nginx preview** — CloudFront serves the bucket.
 - API exposed only on `127.0.0.1:8000` (Caddy/nginx handles TLS externally).
 
@@ -73,9 +71,9 @@ ORIGIN_HOST=staging.yourdomain.com
 ## Critical gotchas
 
 - **External network required**: `make-it-static-network` must exist before any `docker compose` command. Compose declares it as `external: true` and fails if missing.
-- **MinIO credentials**: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` double as MinIO root credentials in dev. Change defaults if exposing MinIO.
-- **Bucket auto-creation**: The `minio-init` service creates the bucket on startup in dev only.
-- **Path-style URLs**: Dev uses `S3_USE_PATH_STYLE=true` because MinIO doesn't support virtual-hosted style.
+- **Dev credentials**: LocalStack accepts any credentials in dev; `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are passed to boto3 but ignored by LocalStack.
+- **Bucket auto-creation**: `localstack/init-s3.sh` (mounted into the container at `/etc/localstack/init/ready.d/`) creates the bucket and an anonymous-read policy on startup in dev only.
+- **Path-style URLs**: Dev uses `S3_USE_PATH_STYLE=true` for LocalStack; real AWS uses virtual-hosted style.
 - **`.env` is gitignored**: Never commit secrets.
 
 ## Dockerfiles

@@ -35,12 +35,12 @@ cp .env.example .env
 
 ### Secrets that MUST be changed in production
 - `HMAC_SECRET`: Generate with `openssl rand -hex 32`. Shared with all clients.
-- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: MinIO root credentials in dev; real AWS in prod.
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: any value works in dev (LocalStack ignores them); real AWS in prod.
 
 ### Dev vs Prod S3 configuration
 | Env | `S3_ENDPOINT_URL` | `S3_USE_PATH_STYLE` | `AWS_ACCESS_KEY_ID` |
 |-----|-------------------|---------------------|---------------------|
-| Dev | `http://minio:9000` | `true` | `minioadmin` |
+| Dev | `http://localstack:4566` | `true` | (any) |
 | Prod | **empty** | `false` | Real AWS key |
 
 ## CORS
