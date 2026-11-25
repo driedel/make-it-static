@@ -30,7 +30,15 @@ BASE_DOMAINS="ajax.googleapis.com,cdnjs.cloudflare.com,s.w.org"
 EXTRA_DOMAINS="${BASE_DOMAINS}${EXTRA_CDN:+,$EXTRA_CDN}"
 EXCLUDE_DOMAINS="fonts.googleapis.com,fonts.gstatic.com"
 
+# wget --domains matches the URL host WITHOUT the port, so entries carrying a
+# port (e.g. "localhost:8300" from a home_url with a non-default port) never
+# match and their assets are silently skipped. Strip ports for --domains only;
+# postprocess.py still receives the original host:port list from jobs.py and
+# rewrites those URLs correctly.
+WGET_DOMAINS=$(printf '%s' "$HOST,$EXTRA_DOMAINS" | sed 's/:[0-9]\+//g')
+
 echo "[scrape] downloading $URL to $OUTPUT_DIR (host=$HOST)"
+echo "[scrape] wget --domains: $WGET_DOMAINS"
 if [ -n "$EXTRA_CDN" ]; then
   echo "[scrape] extra CDNs: $EXTRA_CDN"
 fi
@@ -51,7 +59,7 @@ wget \
   --page-requisites \
   --adjust-extension \
   --span-hosts \
-  --domains="$HOST,$EXTRA_DOMAINS" \
+  --domains="$WGET_DOMAINS" \
   --exclude-domains="$EXCLUDE_DOMAINS" \
   --no-host-directories \
   --restrict-file-names=windows,nocontrol \
