@@ -34,7 +34,7 @@ services:
       - make-it-static-redis:/data
 
   make-it-static-api:
-    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-static-api:latest
+    image: ${DOCKERHUB_USERNAME:-driedel}/make-it-static-api:latest
     container_name: make-it-static-api
     restart: unless-stopped
     environment:
@@ -60,7 +60,7 @@ services:
       retries: 5
 
   make-it-static-worker:
-    image: ${DOCKERHUB_USERNAME:-daniloriedel}/make-it-static-worker:latest
+    image: ${DOCKERHUB_USERNAME:-driedel}/make-it-static-worker:latest
     container_name: make-it-static-worker
     restart: unless-stopped
     environment:

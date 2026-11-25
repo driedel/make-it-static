@@ -1,6 +1,6 @@
 FROM python:3.14-slim
 
-LABEL org.opencontainers.image.source="https://github.com/daniloriedel/make-it-static"
+LABEL org.opencontainers.image.source="https://github.com/driedel/make-it-static"
 LABEL org.opencontainers.image.description="Make it Static — FastAPI webhook service"
 
 WORKDIR /app

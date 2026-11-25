@@ -203,8 +203,8 @@ You will see each pipeline step:
 
 Pre-built images are published to Docker Hub:
 
-- `daniloriedel/make-it-static-api`
-- `daniloriedel/make-it-static-worker`
+- `driedel/make-it-static-api`
+- `driedel/make-it-static-worker`
 
 You can add them to an existing Docker Compose project (for example, alongside WordPress) without cloning this repository.
 

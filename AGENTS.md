@@ -195,8 +195,8 @@ Production `.env` requirements:
 
 A separate workflow (`.github/workflows/dockerhub.yml`) builds and pushes the API and Worker images to Docker Hub:
 
-- `daniloriedel/make-it-static-api`
-- `daniloriedel/make-it-static-worker`
+- `driedel/make-it-static-api`
+- `driedel/make-it-static-worker`
 
 **Triggers:**
 - Manual (`workflow_dispatch`) — publishes `latest`.
