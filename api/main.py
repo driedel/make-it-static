@@ -47,7 +47,7 @@ def _validate_url(url: str) -> None:
 
 
 # --- Infra ---
-app = FastAPI(title="Make it Static API", version="1.0.0")
+app = FastAPI(title="Make it Static API", version="0.3.0")
 
 # CORS: configure allowed origins via CORS_ORIGINS env var (comma-separated).
 # Defaults to "*" for dev. Restrict in production.

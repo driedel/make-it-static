@@ -136,11 +136,41 @@ While the worker is processing, the status will be `started`. When finished:
     "post_id": 1,
     "prefix": "/",
     "files_uploaded": 12,
+    "files_skipped": 30,
     "invalidation_id": null,
-    "bucket": "my-static-site"
+    "bucket": "my-static-site",
+    "report": {
+      "pages": {"count": 3, "bytes": 210000},
+      "assets": {
+        "images":  {"count": 8, "original_bytes": 4200000, "final_bytes": 910000},
+        "css":     {"count": 2, "original_bytes": 180000,  "final_bytes": 41000},
+        "js":      {"count": 3, "original_bytes": 350000,  "final_bytes": 88000},
+        "fonts":   {"count": 1, "original_bytes": 120000,  "final_bytes": 54000},
+        "videos":  {"count": 1, "original_bytes": 29900000, "final_bytes": 11200000,
+                    "converted": 1, "cache_hits": 0},
+        "html":    {"count": 3, "original_bytes": 210000,  "final_bytes": 64000},
+        "other":   {"count": 0, "original_bytes": 0, "final_bytes": 0}
+      },
+      "totals": {"files": 18, "original_bytes": 34960000, "final_bytes": 12457000,
+                 "saved_pct": 64.4},
+      "steps_seconds": {"scrape": 42.1, "postprocess": 0.8, "optimize": 96.3, "upload": 3.9},
+      "top_savings": [
+        {"path": "wp-content/uploads/video.webm", "original_bytes": 29900000,
+         "final_bytes": 11200000}
+      ]
+    }
   }
 }
 ```
+
+The `report` key is the per-job build summary: page count, original → optimized
+bytes per asset type (with video conversion/cache-hit counts), total savings,
+per-step durations, and the 10 files that saved the most. It is built from a
+workdir snapshot taken after postprocessing plus the per-file report that
+`optimize.py` writes (`--report`, actions: `converted`, `bundled`, `minified`,
+`cached`); files the optimizer did not touch count as unchanged. Jobs enqueue
+with a 30-minute timeout so the first (uncached) deploy of video-heavy pages
+fits scraping plus ffmpeg encoding.
 
 ### Step 3 — View the published files
 

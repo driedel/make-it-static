@@ -66,7 +66,7 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 │   └── Dockerfile           # python:3.14-slim image
 ├── worker/
 │   ├── worker.py            # RQ worker entrypoint
-│   ├── jobs.py              # Pipeline orchestration (deploy_page)
+│   ├── jobs.py              # Pipeline orchestration (deploy_page) + per-job build report aggregation
 │   ├── scrape.sh            # wget wrapper
 │   ├── postprocess.py       # HTML cleanup and URL rewriting
 │   ├── optimize.py          # CSS/JS bundling + minification, image/font/video conversion
@@ -246,7 +246,8 @@ The worker container uses **Python 3.14**, which is the target version for this 
 - Use type hints where they already appear (e.g. `list[str]`, `pathlib.Path`).
 - Keep functions focused and document non-obvious behavior in docstrings (the existing code does this extensively).
 - Log pipeline progress with `print(..., flush=True)` inside worker scripts; these lines become container logs.
-- Worker scripts are executed as subprocesses from `jobs.py`; keep CLI interfaces stable (`postprocess.py <dir> <host> [<cdn>...]`, `optimize.py <dir> [--no-* flags]`).
+- Worker scripts are executed as subprocesses from `jobs.py`; keep CLI interfaces stable (`postprocess.py <dir> <host> [<cdn>...]`, `optimize.py <dir> [--no-* flags] [--cache-bucket B --cache-prefix P] [--report PATH]`).
+- Internal pipeline artifacts at the workdir root are never uploaded to S3 (deploy.py skips them): `.video-cache-manifest.json` (per-.webm `source-sha256`/`encoder` metadata for the video conversion cache) and `.build-report.json` (per-file optimizer output that jobs.py aggregates into the job result's `report` key).
 - Prefer `pathlib.Path` for filesystem operations.
 - When writing regexes for asset discovery, include comments explaining the matched pattern, as done for webpack chunks and Elementor assets.
 
