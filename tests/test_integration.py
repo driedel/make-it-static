@@ -340,6 +340,7 @@ def test_convert_videos_cache_hit_skips_ffmpeg(tmp_path):
         raise AssertionError("ffmpeg must not run on a cache hit")
 
     with (
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
         patch("optimize._s3_client", return_value=mock_s3),
         patch("optimize.subprocess.run", side_effect=fail_ffmpeg),
     ):
@@ -372,6 +373,7 @@ def test_convert_videos_cache_miss_on_different_source(tmp_path):
         return ok
 
     with (
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
         patch("optimize._s3_client", return_value=mock_s3),
         patch("optimize.subprocess.run", side_effect=fake_run),
     ):
