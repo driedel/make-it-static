@@ -373,7 +373,8 @@ X-Signature: <hex hmac-sha256 of raw body>
     "bundle_js":       false,
     "compress_images": false,
     "compress_html":   false,
-    "convert_fonts":   false
+    "convert_fonts":   false,
+    "convert_videos":  false
   }
 }
 ```
@@ -396,6 +397,13 @@ X-Signature: <hex hmac-sha256 of raw body>
 | `compress_images` | bool | `true` | Convert raster images to AVIF/WebP |
 | `compress_html` | bool | `true` | Minify HTML |
 | `convert_fonts` | bool | `true` | Convert TTF/OTF fonts to WOFF2 |
+| `convert_videos` | bool | `true` | Convert non-web videos (MOV/AVI/MKV/WMV/MPG) to WebM (VP9 + Opus) |
+
+**Deploy caching:** every uploaded S3 object carries its `sha256` in the object
+metadata; unchanged files are skipped on repeat deploys (no re-upload).
+Converted `.webm` files additionally carry the source video's `source-sha256`
+and an `encoder` tag, so a repeat deploy of an unchanged video skips the ffmpeg
+conversion entirely — the existing `.webm` in S3 is reused.
 
 **Response:**
 

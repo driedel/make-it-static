@@ -48,7 +48,7 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 
 - **API**: Python 3.14, FastAPI 0.165, Uvicorn, Redis, RQ
 - **Worker**: Python 3.14, RQ, boto3, BeautifulSoup 4, rcssmin, rjsmin, minify-html, fonttools, Pillow
-- **External tools inside the worker container**: `wget` (website scraping)
+- **External tools inside the worker container**: `wget` (website scraping), `ffmpeg` (video → WebM conversion)
 - **Queue / cache**: Redis 7
 - **Object storage (dev)**: LocalStack (S3-compatible, pinned image `localstack/localstack:4.6.0`)
 - **Static preview (dev)**: nginx with an `envsubst`-processed template
@@ -69,10 +69,10 @@ A client sends a signed `POST /publish` request with a URL and a `post_id`. The 
 │   ├── jobs.py              # Pipeline orchestration (deploy_page)
 │   ├── scrape.sh            # wget wrapper
 │   ├── postprocess.py       # HTML cleanup and URL rewriting
-│   ├── optimize.py          # CSS/JS bundling + minification, image/font conversion
-│   ├── deploy.py            # S3 upload + CloudFront invalidation
+│   ├── optimize.py          # CSS/JS bundling + minification, image/font/video conversion
+│   ├── deploy.py            # S3 upload (sha256 skip of unchanged files) + CloudFront invalidation
 │   ├── requirements.txt     # Worker Python dependencies
-│   └── Dockerfile           # python:3.14-slim + wget image
+│   └── Dockerfile           # python:3.14-slim + wget + ffmpeg image
 ├── tests/
 │   ├── conftest.py          # pytest path setup and default env vars
 │   ├── test_api.py          # FastAPI endpoint tests
@@ -115,8 +115,8 @@ RQ Worker (worker/worker.py)
     ├── scrape.sh          wget captures HTML + static assets
     ├── jobs.py            dynamic CDN / webpack / Elementor asset downloads
     ├── postprocess.py     filename cleanup, URL rewriting, CMS artifact removal
-    ├── optimize.py        CSS/JS bundling + minification, image/font compression
-    ├── deploy.py          S3 upload with Content-Type / Cache-Control
+    ├── optimize.py        CSS/JS bundling + minification, image/font/video compression
+    ├── deploy.py          S3 upload with Content-Type / Cache-Control (skips unchanged files via sha256 metadata)
     └── deploy.py          CloudFront invalidation
 ```
 
@@ -234,7 +234,7 @@ The tests mock Redis/RQ and do **not** require a running Redis or Docker stack f
 - Optimization option flags (`test_jobs.py`, `test_optimize.py`)
 - CSS/JS bundling and minification (`test_optimize.py`)
 - Filename normalization, URL rewriting, and HTML absolutization (`test_postprocess.py`)
-- S3 upload, CloudFront invalidation, font/image conversion, and subprocess behavior (`test_integration.py`)
+- S3 upload (sha256 skip), CloudFront invalidation, font/image/video conversion, and subprocess behavior (`test_integration.py`)
 
 The worker container uses **Python 3.14**, which is the target version for this project. Running tests inside Docker avoids host interpreter issues.
 

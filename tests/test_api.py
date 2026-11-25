@@ -188,6 +188,7 @@ def test_publish_options_all_false_are_forwarded():
             "compress_images": False,
             "compress_html": False,
             "convert_fonts": False,
+            "convert_videos": False,
         },
     }
     body, headers = _sign(payload)
@@ -199,6 +200,7 @@ def test_publish_options_all_false_are_forwarded():
     assert options_arg["compress_images"] is False
     assert options_arg["compress_html"] is False
     assert options_arg["convert_fonts"] is False
+    assert options_arg["convert_videos"] is False
 
 
 def test_publish_omitted_options_default_to_true():
@@ -214,6 +216,7 @@ def test_publish_omitted_options_default_to_true():
     assert options_arg["compress_images"] is True
     assert options_arg["compress_html"] is True
     assert options_arg["convert_fonts"] is True
+    assert options_arg["convert_videos"] is True
 
 
 def test_publish_partial_options_remaining_default_to_true():

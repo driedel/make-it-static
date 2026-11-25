@@ -276,7 +276,7 @@ def download_elementor_dynamic_assets(workdir: pathlib.Path, origin_url: str) ->
     return downloaded
 
 
-def _build_opt_cmd(workdir: pathlib.Path, opts: dict) -> list[str]:
+def _build_opt_cmd(workdir: pathlib.Path, opts: dict, hostname: str = "") -> list[str]:
     """Builds the optimize.py subprocess command from the options dict."""
     cmd = ["python", "/app/optimize.py", str(workdir)]
     for flag, arg in [
@@ -285,9 +285,14 @@ def _build_opt_cmd(workdir: pathlib.Path, opts: dict) -> list[str]:
         ("compress_images", "--no-compress-images"),
         ("compress_html",   "--no-compress-html"),
         ("convert_fonts",   "--no-convert-fonts"),
+        ("convert_videos",  "--no-convert-videos"),
     ]:
         if not opts.get(flag, True):
             cmd.append(arg)
+    # Same bucket/prefix used by the upload step, so video cache keys match.
+    bucket = os.environ.get("S3_BUCKET", "")
+    if bucket:
+        cmd += ["--cache-bucket", bucket, "--cache-prefix", hostname]
     return cmd
 
 
@@ -348,8 +353,9 @@ def _deploy(
     """
     print("[job] step 4/4: uploading to S3", flush=True)
     bucket = os.environ["S3_BUCKET"]
-    uploaded = sync_to_s3(local_dir=workdir, bucket=bucket, prefix=hostname)
-    print(f"[job] {uploaded} file(s) uploaded to s3://{bucket}/{hostname}/")
+    sync = sync_to_s3(local_dir=workdir, bucket=bucket, prefix=hostname)
+    print(f"[job] {sync['uploaded']} file(s) uploaded to s3://{bucket}/{hostname}/"
+          f" ({sync['skipped']} unchanged)")
 
     dist_id = cloudfront_distribution_id or os.environ.get("CLOUDFRONT_DISTRIBUTION_ID", "")
     invalidation_paths = [f"/{page_path}/*"] if page_path else ["/*"]
@@ -357,7 +363,8 @@ def _deploy(
         distribution_id=dist_id,
         paths=invalidation_paths,
     )
-    return {"files_uploaded": uploaded, "invalidation_id": invalidation_id, "bucket": bucket}
+    return {"files_uploaded": sync["uploaded"], "files_skipped": sync["skipped"],
+            "invalidation_id": invalidation_id, "bucket": bucket}
 
 
 def deploy_page(
@@ -392,9 +399,9 @@ def deploy_page(
         _scrape(url, workdir, extra_cdn)
         _postprocess(workdir, hostname, url, extra_cdn)
 
-        # 3. optimization (CSS/JS bundle + minification)
+        # 3. optimization (media conversion + CSS/JS bundle + minification)
         print("[job] step 3/4: optimizing assets", flush=True)
-        opt = _run(_build_opt_cmd(workdir, opts))
+        opt = _run(_build_opt_cmd(workdir, opts, hostname))
         if opt.returncode != 0:
             print("[job] warning: optimize failed, continuing anyway", flush=True)
 

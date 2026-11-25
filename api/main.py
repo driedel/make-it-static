@@ -60,7 +60,10 @@ app.add_middleware(
 )
 
 redis_conn = Redis.from_url(REDIS_URL)
-queue = Queue("deploys", connection=redis_conn, default_timeout=600)
+# 30 min: the first deploy of a video-heavy page must fit the scrape (≤300 s)
+# plus ffmpeg encoding; cached repeat deploys finish far below this.
+JOB_TIMEOUT = 1800
+queue = Queue("deploys", connection=redis_conn, default_timeout=JOB_TIMEOUT)
 
 
 def verify_signature(raw_body: bytes, sig_header: str, ts_header: str) -> None:
@@ -131,6 +134,7 @@ async def publish(req: Request):
         "compress_images": bool(raw_options.get("compress_images",  True)),
         "compress_html":   bool(raw_options.get("compress_html",    True)),
         "convert_fonts":   bool(raw_options.get("convert_fonts",    True)),
+        "convert_videos":  bool(raw_options.get("convert_videos",   True)),
     }
 
     job = queue.enqueue(
@@ -140,7 +144,7 @@ async def publish(req: Request):
         cloudfront_distribution_id,
         extra_cdn,
         options,
-        job_timeout=600,
+        job_timeout=JOB_TIMEOUT,
         result_ttl=3600,
     )
     return {"job_id": job.id, "status": "queued"}

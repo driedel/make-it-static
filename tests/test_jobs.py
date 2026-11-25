@@ -139,7 +139,7 @@ def _make_mock_run(returncode=0):
 
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value="INV-123")
-@patch("jobs.sync_to_s3", return_value=5)
+@patch("jobs.sync_to_s3", return_value={"uploaded": 5, "skipped": 0})
 @patch("jobs._run")
 def test_deploy_page_no_options_flags_when_all_true(mock_run, _mock_s3, _mock_cf, _mock_rm):
     """When all options are True, no --no-* flags are added to the optimize command."""
@@ -168,7 +168,7 @@ def test_deploy_page_no_options_flags_when_all_true(mock_run, _mock_s3, _mock_cf
 
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value=None)
-@patch("jobs.sync_to_s3", return_value=3)
+@patch("jobs.sync_to_s3", return_value={"uploaded": 3, "skipped": 0})
 @patch("jobs._run")
 def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, _mock_s3, _mock_cf, _mock_rm):
     """When all options are False, all --no-* flags appear in the optimize command."""
@@ -183,6 +183,7 @@ def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, _mock_s3, _mo
             "compress_images": False,
             "compress_html": False,
             "convert_fonts": False,
+            "convert_videos": False,
         },
     )
 
@@ -193,11 +194,12 @@ def test_deploy_page_all_false_options_pass_all_no_flags(mock_run, _mock_s3, _mo
     assert "--no-compress-images" in optimize_cmd
     assert "--no-compress-html" in optimize_cmd
     assert "--no-convert-fonts" in optimize_cmd
+    assert "--no-convert-videos" in optimize_cmd
 
 
 @patch("jobs.shutil.rmtree")
 @patch("jobs.invalidate_cloudfront", return_value=None)
-@patch("jobs.sync_to_s3", return_value=3)
+@patch("jobs.sync_to_s3", return_value={"uploaded": 3, "skipped": 0})
 @patch("jobs._run")
 def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, _mock_s3, _mock_cf, _mock_rm):
     """Omitting options entirely defaults all flags to enabled (no --no-* flags)."""
@@ -210,3 +212,27 @@ def test_deploy_page_no_options_defaults_to_all_enabled(mock_run, _mock_s3, _moc
     assert "--no-bundle-css" not in optimize_cmd
     assert "--no-bundle-js" not in optimize_cmd
     assert "--no-compress-html" not in optimize_cmd
+
+
+def test_build_opt_cmd_passes_s3_cache_args(monkeypatch, tmp_path):
+    """The optimize command carries --cache-bucket/--cache-prefix for the video cache."""
+    from jobs import _build_opt_cmd
+
+    monkeypatch.setenv("S3_BUCKET", "my-bucket")
+    cmd = _build_opt_cmd(tmp_path, {}, hostname="site.com")
+
+    assert "--cache-bucket" in cmd
+    assert cmd[cmd.index("--cache-bucket") + 1] == "my-bucket"
+    assert "--cache-prefix" in cmd
+    assert cmd[cmd.index("--cache-prefix") + 1] == "site.com"
+
+
+def test_build_opt_cmd_omits_cache_args_without_bucket(monkeypatch, tmp_path):
+    """Without S3_BUCKET in the environment, no cache args are passed."""
+    from jobs import _build_opt_cmd
+
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    cmd = _build_opt_cmd(tmp_path, {}, hostname="site.com")
+
+    assert "--cache-bucket" not in cmd
+    assert "--cache-prefix" not in cmd

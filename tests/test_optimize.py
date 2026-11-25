@@ -285,6 +285,38 @@ def test_optimize_directory_convert_fonts_enabled_calls_converter(tmp_path, monk
     assert len(calls) == 1
 
 
+def test_optimize_directory_no_convert_videos_skips_video_conversion(tmp_path, monkeypatch):
+    """Video conversion is skipped when convert_videos=False."""
+    calls = []
+    monkeypatch.setattr(
+        "optimize._convert_videos",
+        lambda root, cache_bucket="", cache_prefix="": calls.append(root) or (0, 0),
+    )
+
+    optimize_directory(str(tmp_path), convert_videos=False)
+
+    assert not calls
+
+
+def test_optimize_directory_convert_videos_enabled_calls_converter(tmp_path, monkeypatch):
+    """Video converter is called exactly once when convert_videos=True, with cache args."""
+    calls = []
+
+    def fake_convert(_root, cache_bucket="", cache_prefix=""):
+        calls.append((cache_bucket, cache_prefix))
+        return 0, 0
+
+    monkeypatch.setattr("optimize._convert_videos", fake_convert)
+
+    stats = optimize_directory(
+        str(tmp_path), convert_videos=True, cache_bucket="b", cache_prefix="site.com"
+    )
+
+    assert calls == [("b", "site.com")]
+    assert stats["videos"] == 0
+    assert stats["videos_cached"] == 0
+
+
 # ---------------------------------------------------------------------------
 # optimize_directory — stats
 # ---------------------------------------------------------------------------

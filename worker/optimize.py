@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """
-optimize.py — bundles and minifies CSS/JS and minifies HTML.
+optimize.py — converts media to modern formats, bundles/minifies CSS/JS, minifies HTML.
 
-usage: python optimize.py <OUTPUT_DIR>
+usage: python optimize.py <OUTPUT_DIR> [--no-* flags] [--cache-bucket B --cache-prefix P]
 
 For each HTML found:
   - Bundles local CSS files into bundle.[hash].css (rewriting internal url() references)
   - Bundles local JS files into bundle.[hash].js
   - Minifies the resulting HTML (including inline <style> and <script> blocks)
 
-Also minifies standalone CSS/JS files not included in any bundle.
+Also converts TTF/OTF fonts to WOFF2, raster images to AVIF/WebP, and non-web
+videos (mov/avi/mkv/...) to WebM — replacing originals and rewriting references —
+and minifies standalone CSS/JS files not included in any bundle.
+
+When --cache-bucket is given, video conversions are cached in S3 (the uploaded
+.webm carries the source's sha256 and the encoder tag in its metadata), so repeat
+deploys of an unchanged video skip the ffmpeg run entirely.
 """
 
 import argparse
 import hashlib
+import json
 import os
 import re
+import shutil
+import subprocess  # nosec B404
+# subprocess runs ffmpeg for video conversion; never with shell=True.
 import sys
 from pathlib import Path
 
@@ -23,6 +33,8 @@ import minify_html
 import rcssmin
 import rjsmin
 from bs4 import BeautifulSoup
+
+from deploy import VIDEO_CACHE_MANIFEST, _s3_client, file_sha256, object_metadata
 
 
 def _file_hash(content: str) -> str:
@@ -214,6 +226,174 @@ def _convert_images(root: Path) -> int:
     return converted
 
 
+# Non-web video formats converted to WebM. .mp4 is intentionally absent (already
+# web-friendly H.264 in practice); .webm is the target format and never a source.
+VIDEO_EXTS = (".mov", ".m4v", ".avi", ".mkv", ".wmv", ".mpg", ".mpeg")
+
+# Encoder fingerprint stored in the S3 object's metadata alongside the converted
+# .webm. Bump it whenever the ffmpeg settings change so stale cached conversions
+# (encoded with older settings) are re-encoded instead of reused.
+VIDEO_ENCODER_TAG = "vp9-crf33-opus96k-v1"
+
+# Per-file ffmpeg timeout in seconds; oversized/pathological videos are skipped
+# with a warning rather than failing the deploy.
+VIDEO_FFMPEG_TIMEOUT = 600
+
+
+def _ffmpeg_convert(video_path: Path, webm_path: Path) -> bool:
+    """Encodes video_path to WebM (VP9 + Opus); returns True on success."""
+    cmd = [
+        "ffmpeg", "-nostdin", "-y",
+        "-i", str(video_path),
+        "-c:v", "libvpx-vp9", "-crf", "33", "-b:v", "0", "-row-mt", "1",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "libopus", "-b:a", "96k",
+        str(webm_path),
+    ]
+    try:
+        result = subprocess.run(  # nosec B603
+            cmd, capture_output=True, text=True, timeout=VIDEO_FFMPEG_TIMEOUT, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"[optimize] warning: ffmpeg timed out on {video_path.name} — keeping original",
+            file=sys.stderr,
+        )
+        return False
+    if result.returncode != 0:
+        tail = (result.stderr or "").strip().splitlines()[-3:]
+        print(
+            f"[optimize] warning: ffmpeg failed on {video_path.name}: {' | '.join(tail)}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _video_cache_hit(s3, bucket: str, key: str, source_hash: str) -> bool:
+    """True when the S3 object was converted from this exact source with the current encoder."""
+    meta = object_metadata(s3, bucket, key)
+    return (
+        meta is not None
+        and meta.get("source-sha256") == source_hash
+        and meta.get("encoder") == VIDEO_ENCODER_TAG
+    )
+
+
+def _process_video(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    video_path: Path,
+    root: Path,
+    ref_exts: tuple[str, ...],
+    s3,
+    cache_bucket: str,
+    cache_prefix: str,
+    video_meta: dict,
+) -> str | None:
+    """
+    Converts (or cache-resolves) one video; returns "converted", "cached" or None.
+
+    On "converted", video_meta gains the .webm's cache entry for deploy.py.
+    On failure the original is kept and None is returned.
+    """
+    old_name = video_path.name
+    webm_path = video_path.with_suffix(".webm")
+    new_name = webm_path.name
+
+    # Target already produced in this deploy — nothing to do
+    if webm_path.exists():
+        return None
+
+    rel_key = webm_path.relative_to(root).as_posix()
+    source_hash = ""
+
+    if s3 is not None:
+        source_hash = file_sha256(video_path)
+        s3_key = f"{cache_prefix}/{rel_key}" if cache_prefix else rel_key
+        if _video_cache_hit(s3, cache_bucket, s3_key, source_hash):
+            video_path.unlink()
+            _update_refs(root, old_name, new_name, ref_exts)
+            print(f"[optimize] video (cached): {old_name} → {new_name} (already in S3)")
+            return "cached"
+
+    if not _ffmpeg_convert(video_path, webm_path):
+        webm_path.unlink(missing_ok=True)
+        return None
+
+    video_path.unlink()
+    _update_refs(root, old_name, new_name, ref_exts)
+    if s3 is not None:
+        # deploy.py merges this into the .webm object's S3 metadata so the
+        # next deploy can skip re-encoding an unchanged source.
+        video_meta[rel_key] = {"source-sha256": source_hash, "encoder": VIDEO_ENCODER_TAG}
+    print(f"[optimize] video: {old_name} → {new_name}")
+    return "converted"
+
+
+def _convert_videos(root: Path, cache_bucket: str = "", cache_prefix: str = "") -> tuple[int, int]:
+    """
+    Converts non-web videos (mov/avi/mkv/...) to WebM and updates references.
+
+    When cache_bucket is set, each converted .webm is looked up in S3 before
+    encoding: if the existing object's metadata has the same source sha256 and
+    encoder tag, the (expensive) ffmpeg run is skipped — the local source is
+    removed and refs rewritten, because the identical .webm is already deployed.
+    Returns (converted, cache_hits).
+    """
+    if shutil.which("ffmpeg") is None:
+        print(
+            "[optimize] warning: ffmpeg not installed — video conversion skipped",
+            file=sys.stderr,
+        )
+        return 0, 0
+
+    s3 = None
+    if cache_bucket:
+        try:
+            s3 = _s3_client()
+        except Exception as exc:  # env issues must not block conversion
+            print(
+                f"[optimize] warning: video S3 cache unavailable ({exc}) — converting anyway",
+                file=sys.stderr,
+            )
+            cache_bucket = ""
+
+    ref_exts = (".html", ".css", ".js")
+    converted = 0
+    cached = 0
+    video_meta: dict[str, dict[str, str]] = {}
+
+    for ext in VIDEO_EXTS:
+        # rglob is case-sensitive on Linux; iPhone/DSLR uploads often use .MOV etc.
+        for video_path in list(root.rglob(f"*{ext}")) + list(root.rglob(f"*{ext.upper()}")):
+            try:
+                outcome = _process_video(
+                    video_path, root, ref_exts, s3, cache_bucket, cache_prefix, video_meta
+                )
+            except Exception as exc:
+                print(
+                    f"[optimize] warning: error processing {video_path.name}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            if outcome == "converted":
+                converted += 1
+            elif outcome == "cached":
+                cached += 1
+
+    if video_meta:
+        try:
+            (root / VIDEO_CACHE_MANIFEST).write_text(
+                json.dumps(video_meta, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            print(
+                f"[optimize] warning: could not write video cache manifest: {exc}",
+                file=sys.stderr,
+            )
+
+    return converted, cached
+
+
 def _resolve_asset(ref: str, html_dir: Path, root: Path) -> Path:
     """Resolves href/src to an absolute filesystem path (supports /absolute paths)."""
     clean = ref.split("?")[0].split("#")[0]
@@ -365,15 +545,22 @@ def optimize_directory(  # pylint: disable=too-many-arguments,too-many-positiona
     compress_images: bool = True,
     compress_html: bool = True,
     convert_fonts: bool = True,
+    convert_videos: bool = True,
+    cache_bucket: str = "",
+    cache_prefix: str = "",
 ) -> dict:
-    """Runs all optimizations (fonts, images, CSS/JS bundling, HTML minification)."""
+    """Runs all optimizations (fonts, images, videos, CSS/JS bundling, HTML minification)."""
     root = Path(output_dir)
-    stats = {"html": 0, "css": 0, "js": 0, "fonts": 0, "images": 0}
+    stats = {"html": 0, "css": 0, "js": 0, "fonts": 0, "images": 0, "videos": 0, "videos_cached": 0}
 
     if convert_fonts:
         stats["fonts"] = _convert_fonts(root)
     if compress_images:
         stats["images"] = _convert_images(root)
+    if convert_videos:
+        stats["videos"], stats["videos_cached"] = _convert_videos(
+            root, cache_bucket=cache_bucket, cache_prefix=cache_prefix
+        )
 
     for html_path in root.rglob("*.html"):
         try:
@@ -417,6 +604,11 @@ def main():
     parser.add_argument("--no-compress-images",  dest="compress_images", action="store_false")
     parser.add_argument("--no-compress-html",    dest="compress_html",   action="store_false")
     parser.add_argument("--no-convert-fonts",    dest="convert_fonts",   action="store_false")
+    parser.add_argument("--no-convert-videos",   dest="convert_videos",  action="store_false")
+    parser.add_argument("--cache-bucket",        default="",
+                        help="S3 bucket of previous deploys (enables the video cache)")
+    parser.add_argument("--cache-prefix",        default="",
+                        help="S3 key prefix of this site (usually the hostname)")
     args = parser.parse_args()
 
     if not Path(args.output_dir).is_dir():
@@ -430,11 +622,15 @@ def main():
         compress_images=args.compress_images,
         compress_html=args.compress_html,
         convert_fonts=args.convert_fonts,
+        convert_videos=args.convert_videos,
+        cache_bucket=args.cache_bucket,
+        cache_prefix=args.cache_prefix,
     )
     print(
         f"[optimize] done — "
         f"{stats['html']} HTML, {stats['css']} CSS, {stats['js']} JS, "
-        f"{stats['fonts']} fonts, {stats['images']} images processed"
+        f"{stats['fonts']} fonts, {stats['images']} images, "
+        f"{stats['videos']} videos ({stats['videos_cached']} from cache) processed"
     )
 
 
