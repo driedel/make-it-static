@@ -243,6 +243,207 @@ def test_build_patterns_removes_pingback_link():
     assert "pingback" not in text
 
 
+def test_build_patterns_does_not_strip_lookalike_domain():
+    """Host 'wordpress' must not strip 'https://wordpress.org/...' — dot is no boundary."""
+    patterns = build_patterns("wordpress")
+    text = '<a href="https://wordpress.org/gutenberg/">Gutenberg</a>'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert 'href="https://wordpress.org/gutenberg/"' in text
+
+
+def test_build_patterns_does_not_strip_lookalike_domain_json_escaped():
+    """JSON-escaped 'https:\\/\\/wordpress.org\\/...' survives a 'wordpress' host strip."""
+    patterns = build_patterns("wordpress")
+    text = r'"url":"https:\/\/wordpress.org\/gutenberg\/"'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert r'"url":"https:\/\/wordpress.org\/gutenberg\/"' in text
+
+
+def test_build_patterns_strips_host_before_path():
+    """Host 'wordpress' still strips plain 'https://wordpress/...' links."""
+    patterns = build_patterns("wordpress")
+    text = 'href="https://wordpress/wp-content/themes/theme/style.css"'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wordpress" not in text
+    assert 'href="/wp-content/themes/theme/style.css"' in text
+
+
+def test_build_patterns_strips_json_escaped_host_before_path():
+    """Host 'wordpress' still strips the JSON-escaped form 'https:\\/\\/wordpress\\/...'."""
+    patterns = build_patterns("wordpress")
+    text = r'"ajaxurl":"https:\/\/wordpress\/wp-admin\/admin-ajax.php"'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wordpress" not in text
+    assert r'"ajaxurl":"\/wp-admin\/admin-ajax.php"' in text
+
+
+def test_build_patterns_strips_bare_host_before_quote_or_end():
+    """Bare 'https://host' followed by a quote or end-of-string is still stripped."""
+    patterns = build_patterns("wordpress")
+    text = '<a href="https://wordpress">home</a> canonical:"https://wordpress"'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wordpress" not in text
+
+
+def test_build_patterns_wordpress_org_survives_full_postprocess(tmp_path):
+    """Regression: 'https://wordpress.org/' must not become '/.org/' after cleanup.
+
+    Reproduces the original bug end-to-end: the prefix strip turned the URL into
+    '.org/...' and absolutize_html_urls then resolved it as a relative path (404).
+    """
+    html_path = tmp_path / "index.html"
+    html_path.touch()
+    patterns = build_patterns("wordpress")
+    text = '<footer><a href="https://wordpress.org/">Learn more</a></footer>'
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    text = absolutize_html_urls(text, html_path, tmp_path)
+    assert 'href="https://wordpress.org/"' in text
+
+
+def test_build_patterns_removes_modern_emoji_style_block():
+    """WP 6.9+ <style id="wp-emoji-styles-inline-css"> block is stripped."""
+    patterns = build_patterns("example.com")
+    text = (
+        '<style id="wp-emoji-styles-inline-css">\n'
+        "\timg.wp-smiley, img.emoji {\n"
+        "\t\tdisplay: inline !important;\n"
+        "\t\theight: 1em !important;\n"
+        "\t}\n"
+        "/*# sourceURL=wp-emoji-styles-inline-css */\n"
+        "</style>"
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wp-emoji" not in text
+    assert "wp-smiley" not in text
+
+
+def test_build_patterns_removes_modern_emoji_json_settings():
+    """WP 6.9+ <script id="wp-emoji-settings" type="application/json"> block is stripped."""
+    patterns = build_patterns("example.com")
+    text = (
+        '<script id="wp-emoji-settings" type="application/json">\n'
+        '{"baseUrl":"https://s.w.org/images/core/emoji/17.0.2/72x72/","ext":".png",'
+        '"svgUrl":"https://s.w.org/images/core/emoji/17.0.2/svg/","svgExt":".svg",'
+        '"source":{"concatemoji":"https://example.com/wp-includes/js/'
+        'wp-emoji-release.min.js?ver=7.1.5"}}\n'
+        "</script>"
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wp-emoji-settings" not in text
+    assert "concatemoji" not in text
+    assert "wp-emoji-release.min.js" not in text
+
+
+def test_build_patterns_removes_modern_emoji_loader_script():
+    """WP 6.9+ id-less inline emoji loader is stripped by its content signature."""
+    patterns = build_patterns("example.com")
+    text = (
+        "<script>\n"
+        'var e="script#wp-emoji-settings",t=document.querySelector(e);'
+        'if(!(t instanceof HTMLScriptElement))throw new Error("Element missing: "+e);'
+        "const r=JSON.parse(t.text),s=(window._wpemojiSettings=r,"
+        '"wpEmojiSettingsSupports"),o=["flag","emoji"];\n'
+        "//# sourceURL=https://example.com/wp-includes/js/wp-emoji-loader.min.js\n"
+        "</script>"
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "_wpemojiSettings" not in text
+    assert "wpEmojiSettingsSupports" not in text
+    assert "wp-emoji-loader.min.js" not in text
+
+
+def test_build_patterns_keeps_legitimate_scripts_around_emoji_loader():
+    """Legitimate <script> blocks before/after the emoji loader must not be removed."""
+    patterns = build_patterns("example.com")
+    text = (
+        '<script>var themeConfig={"palette":["#fff","#000"]};</script>\n'
+        "<script>\n"
+        'var e="script#wp-emoji-settings",t=document.querySelector(e);'
+        "window._wpemojiSettings=JSON.parse(t.text);\n"
+        "</script>\n"
+        '<script src="/wp-content/themes/theme/js/main.js"></script>\n'
+        '<script>console.log("keep me");</script>'
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "_wpemojiSettings" not in text
+    assert 'var themeConfig={"palette":["#fff","#000"]};' in text
+    assert '<script src="/wp-content/themes/theme/js/main.js"></script>' in text
+    assert 'console.log("keep me");' in text
+
+
+def test_build_patterns_emoji_loader_match_does_not_cross_script_boundaries():
+    """The content-signature match must not swallow a previous legitimate script."""
+    patterns = build_patterns("example.com")
+    text = (
+        '<script>var config={"theme":"twentytwentyfive"};</script>'
+        '<script>var e="script#wp-emoji-settings";'
+        "window._wpemojiSettings=JSON.parse(t.text);</script>"
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert 'var config={"theme":"twentytwentyfive"};' in text
+    assert "_wpemojiSettings" not in text
+
+
+def test_build_patterns_removes_all_modern_emoji_markup():
+    """Regression: full WP 6.9+/7.x emoji markup is stripped, other content survives.
+
+    Fixture mirrors the real markup captured from a live WordPress 7.1 homepage:
+    inline <style>, JSON settings block, and the id-less loader that injects
+    wp-emoji-release.min.js at runtime.
+    """
+    patterns = build_patterns("wordpress")
+    text = (
+        "<html><head>\n"
+        '<style id="wp-emoji-styles-inline-css">\n'
+        "\timg.wp-smiley, img.emoji {\n"
+        "\t\tdisplay: inline !important;\n"
+        "\t\theight: 1em !important;\n"
+        "\t}\n"
+        "/*# sourceURL=wp-emoji-styles-inline-css */\n"
+        "</style>\n"
+        '<script id="wp-emoji-settings" type="application/json">\n'
+        '{"baseUrl":"https://s.w.org/images/core/emoji/17.0.2/72x72/","ext":".png",'
+        '"svgUrl":"https://s.w.org/images/core/emoji/17.0.2/svg/","svgExt":".svg",'
+        '"source":{"concatemoji":"http://localhost:8300/wp-includes/js/'
+        'wp-emoji-release.min.js?ver=7.1.5"}}\n'
+        "</script>\n"
+        "</head><body>\n"
+        "<p>Hello</p>\n"
+        "<script>\n"
+        'var e="script#wp-emoji-settings",t=document.querySelector(e);'
+        'if(!(t instanceof HTMLScriptElement))throw new Error("Element missing: "+e);'
+        "const r=JSON.parse(t.text),s=(window._wpemojiSettings=r,"
+        '"wpEmojiSettingsSupports"),o=["flag","emoji"];\n'
+        "//# sourceURL=http://localhost:8300/wp-includes/js/wp-emoji-loader.min.js\n"
+        "</script>\n"
+        '<script src="/wp-content/themes/theme/js/main.js"></script>\n'
+        "</body></html>"
+    )
+    for pat, repl in patterns:
+        text = pat.sub(repl, text)
+    assert "wp-emoji-styles-inline-css" not in text
+    assert "wp-emoji-settings" not in text
+    assert "_wpemojiSettings" not in text
+    assert "wpEmojiSettingsSupports" not in text
+    assert "wp-emoji-release.min.js" not in text
+    assert "wp-emoji-loader.min.js" not in text
+    assert "wp-smiley" not in text
+    # unrelated content survives untouched
+    assert "<p>Hello</p>" in text
+    assert '<script src="/wp-content/themes/theme/js/main.js"></script>' in text
+
+
 # ---------------------------------------------------------------------------
 # absolutize_html_urls
 # ---------------------------------------------------------------------------

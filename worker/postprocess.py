@@ -90,7 +90,13 @@ def build_patterns(origin_host: str, extra_hosts: list[str] | None = None):
         # any http/https://<host> → relative URL (origin + extra CDNs).
         # Matches both the plain form (href="https://host/...") and the JSON-escaped form
         # ("url":"https:\/\/host\/...") that WordPress embeds in inline JS config blocks.
-        (re.compile(rf"https?:\\?/\\?/{re.escape(h)}"), "")
+        # The lookahead enforces a boundary right after the host: without it, a host that
+        # is a prefix of another domain gets stripped too — e.g. with origin host
+        # "wordpress", "https://wordpress.org/..." would become ".org/..." (later resolved
+        # as a relative URL → 404). "." is deliberately NOT a boundary char for exactly
+        # that reason; "\" IS one, so the JSON-escaped form ("https:\/\/host\/...") still
+        # matches. Bare "https://host" before a quote/whitespace/end also keeps matching.
+        (re.compile(rf"https?:\\?/\\?/{re.escape(h)}(?=$|[\s/\\'\"?#)\]}}])"), "")
         for h in [origin_host] + (extra_hosts or [])
     ]
     return host_patterns + [
@@ -104,6 +110,38 @@ def build_patterns(origin_host: str, extra_hosts: list[str] | None = None):
         ),
         (
             re.compile(r"<link[^>]*wp-emoji[^>]*>", re.IGNORECASE),
+            "",
+        ),
+        # Modern WordPress (6.9+) emoji markup, in three parts:
+        # 1. inline <style> with the img.wp-smiley / img.emoji CSS
+        (
+            re.compile(
+                r'<style[^>]*id=["\']wp-emoji-styles-inline-css["\'][^>]*>.*?</style>',
+                re.IGNORECASE | re.DOTALL,
+            ),
+            "",
+        ),
+        # 2. JSON settings block (<script id="wp-emoji-settings" type="application/json">)
+        # consumed by the emoji loader
+        (
+            re.compile(
+                r'<script[^>]*id=["\']wp-emoji-settings["\'][^>]*>.*?</script>',
+                re.IGNORECASE | re.DOTALL,
+            ),
+            "",
+        ),
+        # 3. id-less inline loader that injects wp-emoji-release.min.js at runtime — the
+        # file is only a JS string, never scraped, so the injection 404s on static sites.
+        # With no id to anchor on, it is matched by content signature (_wpemojiSettings /
+        # wpEmojiSettingsSupports). The tempered dot ((?:(?!</script>)[\s\S])*) cannot
+        # cross a </script> boundary, so neighboring legitimate scripts are never removed.
+        (
+            re.compile(
+                r"<script[^>]*>(?:(?!</script>)[\s\S])*?"
+                r"(?:_wpemojiSettings|wpEmojiSettingsSupports)"
+                r"(?:(?!</script>)[\s\S])*?</script>",
+                re.IGNORECASE,
+            ),
             "",
         ),
         # WordPress REST/oEmbed/EditURI links
