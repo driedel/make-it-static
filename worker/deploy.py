@@ -79,6 +79,11 @@ def content_type_for(path: pathlib.Path) -> str:
 # merges these into the object's S3 metadata and never uploads the manifest itself.
 VIDEO_CACHE_MANIFEST = ".video-cache-manifest.json"
 
+# Build report written by optimize.py (--report) at the workdir root and consumed
+# by jobs.py to build the per-job summary. Like the video cache manifest, it is
+# an internal pipeline artifact and is never uploaded to S3.
+BUILD_REPORT = ".build-report.json"
+
 
 def file_sha256(path: pathlib.Path) -> str:
     """Returns the hex sha256 of a file, read in chunks (videos can be large)."""
@@ -122,7 +127,7 @@ def sync_to_s3(local_dir: pathlib.Path, bucket: str, prefix: str) -> dict:
             print(f"[deploy] warning: could not read video cache manifest: {exc}")
 
     for path in local_dir.rglob("*"):
-        if not path.is_file() or path.name == VIDEO_CACHE_MANIFEST:
+        if not path.is_file() or path.name in (VIDEO_CACHE_MANIFEST, BUILD_REPORT):
             continue
         rel = path.relative_to(local_dir).as_posix()
         key = f"{prefix}/{rel}" if prefix else rel

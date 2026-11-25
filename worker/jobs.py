@@ -3,6 +3,7 @@ jobs.py — function executed by the RQ worker for each deploy.
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -12,9 +13,11 @@ import subprocess  # nosec B404
 import sys
 import tempfile
 import threading
+import time
 from urllib.parse import urlparse
 
-from deploy import invalidate_cloudfront, sync_to_s3
+from deploy import BUILD_REPORT, invalidate_cloudfront, sync_to_s3
+from optimize import asset_kind
 
 
 def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
@@ -293,7 +296,186 @@ def _build_opt_cmd(workdir: pathlib.Path, opts: dict, hostname: str = "") -> lis
     bucket = os.environ.get("S3_BUCKET", "")
     if bucket:
         cmd += ["--cache-bucket", bucket, "--cache-prefix", hostname]
+    # The build report feeds the per-job summary assembled after the deploy.
+    cmd += ["--report", str(workdir / BUILD_REPORT)]
     return cmd
+
+
+# Report asset bucket names, in the order the plugin renders them. The
+# optimize report uses singular kinds ("image", "font", ...); the summary
+# groups them under these pluralized keys.
+_REPORT_BUCKETS = ("images", "css", "js", "fonts", "videos", "html", "other")
+
+_KIND_TO_BUCKET = {
+    "image": "images",
+    "css": "css",
+    "js": "js",
+    "font": "fonts",
+    "video": "videos",
+    "html": "html",
+    "other": "other",
+}
+
+
+def _snapshot_workdir(workdir: pathlib.Path) -> dict[str, dict]:
+    """
+    Baseline of the workdir taken after postprocess and before optimize:
+    site-relative path → {"bytes": size, "kind": asset kind}.
+
+    Taken post-postprocess so the @-renames (e.g. style.css@ver=1 → style.css)
+    already happened and paths match what optimize.py will report. This is the
+    "original" side of the build summary; anything optimize does not report is
+    treated as unchanged (final bytes = baseline bytes).
+    """
+    snapshot: dict[str, dict] = {}
+    for path in workdir.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            print(f"[job] warning: could not stat {path}: {exc}", file=sys.stderr)
+            continue
+        rel = path.relative_to(workdir).as_posix()
+        snapshot[rel] = {"bytes": size, "kind": asset_kind(path)}
+    return snapshot
+
+
+def _load_optimize_report(workdir: pathlib.Path) -> list:
+    """
+    Reads the per-file build report written by optimize.py (--report).
+
+    Fail-open: a missing or invalid report yields an empty list (the summary
+    then reflects the snapshot only) so a broken report never fails the job.
+    """
+    report_file = workdir / BUILD_REPORT
+    try:
+        data = json.loads(report_file.read_text(encoding="utf-8"))
+        files = data.get("files")
+        if isinstance(files, list):
+            return files
+        print("[job] warning: build report has no files list — summary from snapshot only")
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[job] warning: could not read build report ({exc}) — summary from snapshot only")
+    return []
+
+
+def _index_report_entries(report_files: list) -> tuple[dict, list, set]:
+    """
+    Splits the optimize report into per-path entries and bundle entries.
+
+    Returns (consumed, bundles, bundle_sources): consumed maps the snapshot
+    path each converted/minified/cached entry replaces; bundle_sources holds
+    the paths folded into a bundle, so the snapshot walk can skip them (their
+    bytes are accounted for by the bundle entry itself).
+    """
+    consumed: dict[str, dict] = {}
+    bundles: list[dict] = []
+    bundle_sources: set[str] = set()
+    for entry in report_files:
+        if entry.get("action") == "bundled":
+            bundles.append(entry)
+            for src in entry.get("sources", []):
+                bundle_sources.add(src.get("path", ""))
+        else:
+            consumed[entry.get("path", "")] = entry
+    return consumed, bundles, bundle_sources
+
+
+def _accumulate_entry(
+    bucket: dict, original: int, final: int, savings: list, path: str
+) -> None:
+    """Adds one file's original/final sizes to a bucket and tracks savings."""
+    bucket["count"] += 1
+    bucket["original_bytes"] += original
+    bucket["final_bytes"] += final
+    if original > final:
+        savings.append({"path": path, "original_bytes": original, "final_bytes": final})
+
+
+def _build_report_summary(
+    snapshot: dict[str, dict],
+    report_files: list,
+    steps: dict[str, float],
+) -> dict:
+    """
+    Aggregates the pre-optimize snapshot + optimize's per-file report into the
+    per-job build summary stored under result["report"].
+
+    Accounting rules:
+      - files reported as converted/minified/cached contribute their recorded
+        original/final sizes (path = the file as it existed in the snapshot);
+      - bundle entries replace their sources: the sources are skipped in the
+        snapshot walk and the bundle contributes sum(sources) → bundle size;
+      - everything else is unchanged: final bytes = snapshot bytes;
+      - HTML files additionally feed "pages" (count + scraped/original bytes;
+        the minification delta itself lives in assets.html).
+    """
+    buckets = {
+        name: {"count": 0, "original_bytes": 0, "final_bytes": 0}
+        for name in _REPORT_BUCKETS
+    }
+    video_counts = {"converted": 0, "cache_hits": 0}
+    savings: list[dict] = []
+    consumed, bundles, bundle_sources = _index_report_entries(report_files)
+
+    for rel, info in snapshot.items():
+        if rel in bundle_sources:
+            continue  # accounted for by the bundle entry below
+        bucket = buckets[_KIND_TO_BUCKET.get(info["kind"], "other")]
+        entry = consumed.get(rel)
+        if entry is None:
+            _accumulate_entry(bucket, info["bytes"], info["bytes"], savings, rel)
+            continue
+        _accumulate_entry(
+            bucket,
+            int(entry.get("original_bytes", info["bytes"])),
+            int(entry.get("final_bytes", info["bytes"])),
+            savings,
+            rel,
+        )
+        if info["kind"] == "video":
+            if entry.get("action") == "converted":
+                video_counts["converted"] += 1
+            elif entry.get("action") == "cached":
+                video_counts["cache_hits"] += 1
+
+    for entry in bundles:
+        bucket = buckets[_KIND_TO_BUCKET.get(entry.get("kind", "other"), "other")]
+        _accumulate_entry(
+            bucket,
+            int(entry.get("original_bytes", 0)),
+            int(entry.get("final_bytes", 0)),
+            savings,
+            entry.get("path", ""),
+        )
+
+    total_files = sum(b["count"] for b in buckets.values())
+    total_original = sum(b["original_bytes"] for b in buckets.values())
+    total_final = sum(b["final_bytes"] for b in buckets.values())
+    saved_pct = round((1 - total_final / total_original) * 100, 1) if total_original else 0.0
+
+    assets = {}
+    for name in _REPORT_BUCKETS:
+        assets[name] = dict(buckets[name])
+        if name == "videos":
+            assets[name].update(video_counts)
+
+    savings.sort(key=lambda s: s["original_bytes"] - s["final_bytes"], reverse=True)
+
+    html_bucket = buckets["html"]
+    return {
+        "pages": {"count": html_bucket["count"], "bytes": html_bucket["original_bytes"]},
+        "assets": assets,
+        "totals": {
+            "files": total_files,
+            "original_bytes": total_original,
+            "final_bytes": total_final,
+            "saved_pct": saved_pct,
+        },
+        "steps_seconds": {name: round(seconds, 1) for name, seconds in steps.items()},
+        "top_savings": savings[:10],
+    }
 
 
 def _scrape(url: str, workdir: pathlib.Path, extra_cdn: list[str]) -> None:
@@ -381,6 +563,11 @@ def deploy_page(
     Each site can send its own cloudfront_distribution_id in the payload (optional;
     falls back to CLOUDFRONT_DISTRIBUTION_ID env var if absent).
     extra_cdn: additional domains to include in the download (CDNs present in the HTML).
+
+    The returned dict carries a "report" key with the per-job build summary
+    (pages, assets by type with original → final bytes, per-step timings, top
+    savings), aggregated from a pre-optimize workdir snapshot and the per-file
+    report optimize.py writes via --report.
     """
     workdir = _make_workdir(post_id)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -395,17 +582,34 @@ def deploy_page(
 
     print(f"[job] started: url={url} post_id={post_id} site={hostname} workdir={workdir}")
 
+    steps: dict[str, float] = {}
+
     try:
+        start = time.monotonic()
         _scrape(url, workdir, extra_cdn)
+        steps["scrape"] = time.monotonic() - start
+
+        start = time.monotonic()
         _postprocess(workdir, hostname, url, extra_cdn)
+        steps["postprocess"] = time.monotonic() - start
+
+        # Baseline for the build report: taken after postprocess (so the @
+        # renames already happened) and before optimize touches anything.
+        snapshot = _snapshot_workdir(workdir)
 
         # 3. optimization (media conversion + CSS/JS bundle + minification)
         print("[job] step 3/4: optimizing assets", flush=True)
+        start = time.monotonic()
         opt = _run(_build_opt_cmd(workdir, opts, hostname))
+        steps["optimize"] = time.monotonic() - start
         if opt.returncode != 0:
             print("[job] warning: optimize failed, continuing anyway", flush=True)
 
+        start = time.monotonic()
         deploy_result = _deploy(workdir, hostname, page_path, cloudfront_distribution_id)
+        steps["upload"] = time.monotonic() - start
+
+        report = _build_report_summary(snapshot, _load_optimize_report(workdir), steps)
 
         result = {
             "ok": True,
@@ -414,6 +618,7 @@ def deploy_page(
             "site": hostname,
             "prefix": page_path or "/",
             **deploy_result,
+            "report": report,
         }
         print(f"[job] OK: {result}")
         return result

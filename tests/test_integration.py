@@ -504,6 +504,25 @@ def test_sync_to_s3_merges_video_cache_manifest(tmp_path):
     assert metadata["encoder"] == "v1"
 
 
+def test_sync_to_s3_skips_build_report(tmp_path):
+    """The build report is an internal pipeline artifact and is never uploaded."""
+    from deploy import BUILD_REPORT, sync_to_s3
+
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / BUILD_REPORT).write_text('{"files": []}')
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+    with patch("deploy._s3_client", return_value=mock_s3):
+        result = sync_to_s3(tmp_path, "test-bucket", "example.com")
+
+    assert result == {"uploaded": 1, "skipped": 0}
+    uploaded_keys = [c.kwargs["Key"] for c in mock_s3.upload_file.call_args_list]
+    assert uploaded_keys == ["example.com/index.html"]
+
+
 # ---------------------------------------------------------------------------
 # CloudFront invalidation (mock boto3)
 # ---------------------------------------------------------------------------
