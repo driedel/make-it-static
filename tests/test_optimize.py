@@ -1,10 +1,17 @@
 """Tests for optimize.py — CSS/JS bundling, minification, and directory optimization."""
 
+import json
+import subprocess  # nosec B404
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 from bs4 import BeautifulSoup
 
+from deploy import BUILD_REPORT
 from optimize import (
     _bundle_css,
     _bundle_js,
+    _convert_videos,
     _file_hash,
     _rewrite_css_urls,
     optimize_directory,
@@ -258,7 +265,9 @@ def test_optimize_directory_no_bundle_js_creates_no_bundle(tmp_path):
 def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, monkeypatch):
     """Font conversion is skipped when convert_fonts=False."""
     calls = []
-    monkeypatch.setattr("optimize._convert_fonts", lambda root: calls.append(root) or 0)
+    monkeypatch.setattr(
+        "optimize._convert_fonts", lambda root, report=None: calls.append(root) or 0
+    )
 
     optimize_directory(str(tmp_path), convert_fonts=False)
 
@@ -268,7 +277,9 @@ def test_optimize_directory_no_convert_fonts_skips_font_conversion(tmp_path, mon
 def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, monkeypatch):
     """Image conversion is skipped when compress_images=False."""
     calls = []
-    monkeypatch.setattr("optimize._convert_images", lambda root: calls.append(root) or 0)
+    monkeypatch.setattr(
+        "optimize._convert_images", lambda root, report=None: calls.append(root) or 0
+    )
 
     optimize_directory(str(tmp_path), compress_images=False)
 
@@ -278,11 +289,45 @@ def test_optimize_directory_no_compress_images_skips_image_conversion(tmp_path, 
 def test_optimize_directory_convert_fonts_enabled_calls_converter(tmp_path, monkeypatch):
     """Font converter is called exactly once when convert_fonts=True."""
     calls = []
-    monkeypatch.setattr("optimize._convert_fonts", lambda root: calls.append(root) or 0)
+    monkeypatch.setattr(
+        "optimize._convert_fonts", lambda root, report=None: calls.append(root) or 0
+    )
 
     optimize_directory(str(tmp_path), convert_fonts=True)
 
     assert len(calls) == 1
+
+
+def test_optimize_directory_no_convert_videos_skips_video_conversion(tmp_path, monkeypatch):
+    """Video conversion is skipped when convert_videos=False."""
+    calls = []
+    monkeypatch.setattr(
+        "optimize._convert_videos",
+        lambda root, cache_bucket="", cache_prefix="", report=None: calls.append(root) or (0, 0),
+    )
+
+    optimize_directory(str(tmp_path), convert_videos=False)
+
+    assert not calls
+
+
+def test_optimize_directory_convert_videos_enabled_calls_converter(tmp_path, monkeypatch):
+    """Video converter is called exactly once when convert_videos=True, with cache args."""
+    calls = []
+
+    def fake_convert(_root, cache_bucket="", cache_prefix="", **_kwargs):
+        calls.append((cache_bucket, cache_prefix))
+        return 0, 0
+
+    monkeypatch.setattr("optimize._convert_videos", fake_convert)
+
+    stats = optimize_directory(
+        str(tmp_path), convert_videos=True, cache_bucket="b", cache_prefix="site.com"
+    )
+
+    assert calls == [("b", "site.com")]
+    assert stats["videos"] == 0
+    assert stats["videos_cached"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -316,3 +361,164 @@ def test_optimize_directory_stats_count_css_files(tmp_path):
     stats = optimize_directory(str(tmp_path), bundle_js=False)
 
     assert stats["css"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Build report (--report)
+# ---------------------------------------------------------------------------
+
+def _read_report_files(report_path):
+    """Loads the files list from a build report JSON written by optimize."""
+    return json.loads(report_path.read_text(encoding="utf-8"))["files"]
+
+
+def test_optimize_directory_report_records_converted_image(tmp_path):
+    """A converted image appears in the report with original and final sizes."""
+    from PIL import Image  # pylint: disable=import-outside-toplevel
+
+    Image.new("RGB", (32, 32), color="red").save(tmp_path / "photo.png")
+    html = tmp_path / "index.html"
+    html.write_text('<html><body><img src="photo.png"></body></html>')
+
+    report_path = tmp_path / BUILD_REPORT
+    optimize_directory(str(tmp_path), report_path=str(report_path))
+
+    files = _read_report_files(report_path)
+    entry = next(f for f in files if f["kind"] == "image")
+    assert entry["action"] == "converted"
+    assert entry["path"] == "photo.png"
+    assert entry["original_bytes"] > 0
+    assert entry["final_bytes"] > 0
+
+
+def test_optimize_directory_report_records_bundle_with_sources(tmp_path):
+    """A CSS bundle is reported with its source files and their sizes."""
+    (tmp_path / "a.css").write_text("body { color: red; }")
+    (tmp_path / "b.css").write_text("h1 { font-size: 2em; }")
+    html = tmp_path / "index.html"
+    html.write_text(
+        '<html><head>'
+        '<link rel="stylesheet" href="a.css">'
+        '<link rel="stylesheet" href="b.css">'
+        '</head><body></body></html>'
+    )
+
+    report_path = tmp_path / BUILD_REPORT
+    optimize_directory(str(tmp_path), report_path=str(report_path))
+
+    files = _read_report_files(report_path)
+    entry = next(f for f in files if f["action"] == "bundled")
+    assert entry["kind"] == "css"
+    assert entry["path"].startswith("bundle.")
+    assert [s["path"] for s in entry["sources"]] == ["a.css", "b.css"]
+    assert entry["original_bytes"] == sum(s["bytes"] for s in entry["sources"])
+    assert entry["final_bytes"] == (tmp_path / entry["path"]).stat().st_size
+
+
+def test_optimize_directory_report_records_minified_html(tmp_path):
+    """HTML minification is reported with before/after sizes."""
+    html = tmp_path / "index.html"
+    html.write_text(
+        "<html>  <head>  </head>  <body>  <p>  hello  </p>  </body>  </html>"
+    )
+
+    report_path = tmp_path / BUILD_REPORT
+    optimize_directory(
+        str(tmp_path), bundle_css=False, bundle_js=False, report_path=str(report_path)
+    )
+
+    files = _read_report_files(report_path)
+    entry = next(f for f in files if f["kind"] == "html")
+    assert entry["action"] == "minified"
+    assert entry["path"] == "index.html"
+    assert entry["original_bytes"] > entry["final_bytes"]
+
+
+def test_convert_videos_report_records_converted(tmp_path):
+    """A converted video is reported with the source .mov and output .webm sizes."""
+    (tmp_path / "clip.mov").write_bytes(b"fake-video-bytes")
+
+    ok = subprocess.CompletedProcess([], returncode=0, stderr="")
+
+    def fake_run(cmd, **_kwargs):
+        """Simulates ffmpeg producing the output .webm."""
+        Path(cmd[-1]).write_bytes(b"webm")
+        return ok
+
+    report = []
+    with (
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
+        patch("optimize.subprocess.run", side_effect=fake_run),
+    ):
+        converted, cached = _convert_videos(tmp_path, report=report)
+
+    assert (converted, cached) == (1, 0)
+    assert report == [{
+        "path": "clip.mov",
+        "kind": "video",
+        "action": "converted",
+        "original_bytes": len(b"fake-video-bytes"),
+        "final_bytes": len(b"webm"),
+    }]
+
+
+def test_convert_videos_report_records_cache_hit(tmp_path):
+    """A cache-hit video is reported as cached, sized by the S3 object metadata."""
+    from deploy import file_sha256  # pylint: disable=import-outside-toplevel
+
+    (tmp_path / "clip.mov").write_bytes(b"fake-video")
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.return_value = {
+        "Metadata": {
+            "source-sha256": file_sha256(tmp_path / "clip.mov"),
+            "encoder": "vp9-crf33-opus96k-v1",
+        },
+        "ContentLength": 1234,
+    }
+
+    def fail_ffmpeg(*_args, **_kwargs):
+        raise AssertionError("ffmpeg must not run on a cache hit")
+
+    report = []
+    with (
+        patch("optimize._s3_client", return_value=mock_s3),
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
+        patch("optimize.subprocess.run", side_effect=fail_ffmpeg),
+    ):
+        converted, cached = _convert_videos(
+            tmp_path, cache_bucket="b", cache_prefix="site.com", report=report
+        )
+
+    assert (converted, cached) == (0, 1)
+    assert report == [{
+        "path": "clip.mov",
+        "kind": "video",
+        "action": "cached",
+        "original_bytes": len(b"fake-video"),
+        "final_bytes": 1234,
+    }]
+
+
+def test_optimize_directory_without_report_writes_no_file(tmp_path):
+    """Without report_path no build report is written and behavior is unchanged."""
+    (tmp_path / "index.html").write_text("<html><body>hi</body></html>")
+
+    stats = optimize_directory(str(tmp_path), bundle_css=False, bundle_js=False)
+
+    assert not (tmp_path / BUILD_REPORT).exists()
+    assert stats["html"] == 1
+
+
+def test_optimize_directory_report_write_failure_is_not_fatal(tmp_path):
+    """An unwritable report path only logs a warning — optimization still succeeds."""
+    (tmp_path / "index.html").write_text("<html><body>hi</body></html>")
+
+    stats = optimize_directory(
+        str(tmp_path),
+        bundle_css=False,
+        bundle_js=False,
+        report_path=str(tmp_path / "no-such-dir" / "report.json"),
+    )
+
+    assert stats["html"] == 1

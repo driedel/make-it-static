@@ -1,11 +1,13 @@
 """Integration tests — exercise real dependencies (Pillow, fontTools, boto3, subprocess)."""
 
+import shutil
 import subprocess  # nosec B404
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
-from optimize import _convert_fonts, _convert_images, optimize_directory
+from optimize import _convert_fonts, _convert_images, _convert_videos, optimize_directory
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +239,151 @@ def test_optimize_directory_full_pipeline(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Video conversion (ffmpeg, mocked S3 cache)
+# ---------------------------------------------------------------------------
+
+def _make_test_video(dest) -> None:
+    """Generates a 1-second .mov clip with ffmpeg (lavfi test source)."""
+    subprocess.run(  # nosec B603
+        [
+            "ffmpeg", "-nostdin", "-y",
+            "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=1",
+            str(dest),
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_convert_videos_mov_to_webm(tmp_path):
+    """A .mov is converted to .webm, removed, and the HTML <video> ref is rewritten."""
+    _make_test_video(tmp_path / "clip.mov")
+    html = tmp_path / "index.html"
+    html.write_text('<html><body><video src="clip.mov" controls></video></body></html>')
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+    with patch("optimize._s3_client", return_value=mock_s3):
+        converted, cached = _convert_videos(tmp_path, cache_bucket="b", cache_prefix="site.com")
+
+    assert (converted, cached) == (1, 0)
+    assert not (tmp_path / "clip.mov").exists()
+    webm = tmp_path / "clip.webm"
+    assert webm.exists() and webm.stat().st_size > 0
+    assert 'src="clip.webm"' in html.read_text()
+
+    # The cache manifest maps the .webm to the source hash + encoder tag
+    import json as json_mod  # pylint: disable=import-outside-toplevel
+    from deploy import VIDEO_CACHE_MANIFEST  # pylint: disable=import-outside-toplevel
+    manifest = json_mod.loads((tmp_path / VIDEO_CACHE_MANIFEST).read_text())
+    assert manifest["clip.webm"]["encoder"]
+    assert len(manifest["clip.webm"]["source-sha256"]) == 64
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_convert_videos_skips_mp4_and_webm(tmp_path):
+    """.mp4 (already web-friendly) and .webm (target format) are never converted."""
+    _make_test_video(tmp_path / "clip.mp4")
+    _make_test_video(tmp_path / "clip.webm")
+
+    converted, cached = _convert_videos(tmp_path)
+
+    assert (converted, cached) == (0, 0)
+    assert (tmp_path / "clip.mp4").exists()
+    assert (tmp_path / "clip.webm").exists()
+
+
+def test_convert_videos_skips_without_ffmpeg(tmp_path):
+    """When ffmpeg is not on PATH, conversion is skipped and files are kept."""
+    (tmp_path / "clip.mov").write_bytes(b"fake-video")
+
+    with patch("optimize.shutil.which", return_value=None):
+        converted, cached = _convert_videos(tmp_path)
+
+    assert (converted, cached) == (0, 0)
+    assert (tmp_path / "clip.mov").exists()
+
+
+def test_convert_videos_ffmpeg_failure_keeps_original(tmp_path):
+    """A non-zero ffmpeg exit keeps the original and produces no .webm."""
+    (tmp_path / "clip.mov").write_bytes(b"fake-video")
+
+    failed = subprocess.CompletedProcess([], returncode=1, stderr="boom")
+    with patch("optimize.subprocess.run", return_value=failed):
+        converted, cached = _convert_videos(tmp_path)
+
+    assert (converted, cached) == (0, 0)
+    assert (tmp_path / "clip.mov").exists()
+    assert not (tmp_path / "clip.webm").exists()
+
+
+def test_convert_videos_cache_hit_skips_ffmpeg(tmp_path):
+    """Matching source-sha256 + encoder metadata in S3 skips encoding entirely."""
+    from deploy import VIDEO_CACHE_MANIFEST, file_sha256
+
+    (tmp_path / "clip.mov").write_bytes(b"fake-video")
+    html = tmp_path / "index.html"
+    html.write_text('<html><body><video src="clip.mov"></video></body></html>')
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.return_value = {
+        "Metadata": {
+            "source-sha256": file_sha256(tmp_path / "clip.mov"),
+            "encoder": "vp9-crf33-opus96k-v1",
+        }
+    }
+
+    def fail_ffmpeg(*_args, **_kwargs):
+        raise AssertionError("ffmpeg must not run on a cache hit")
+
+    with (
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
+        patch("optimize._s3_client", return_value=mock_s3),
+        patch("optimize.subprocess.run", side_effect=fail_ffmpeg),
+    ):
+        converted, cached = _convert_videos(tmp_path, cache_bucket="b", cache_prefix="site.com")
+
+    assert (converted, cached) == (0, 1)
+    assert not (tmp_path / "clip.mov").exists()
+    assert not (tmp_path / "clip.webm").exists()  # already deployed in S3
+    assert not (tmp_path / VIDEO_CACHE_MANIFEST).exists()  # nothing converted this run
+    assert 'src="clip.webm"' in html.read_text()
+    head_key = mock_s3.head_object.call_args.kwargs["Key"]
+    assert head_key == "site.com/clip.webm"
+
+
+def test_convert_videos_cache_miss_on_different_source(tmp_path):
+    """A changed source hash falls through to ffmpeg (cache ignored)."""
+    (tmp_path / "clip.mov").write_bytes(b"fake-video")
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.return_value = {
+        "Metadata": {"source-sha256": "0" * 64, "encoder": "vp9-crf33-opus96k-v1"}
+    }
+
+    ok = subprocess.CompletedProcess([], returncode=0, stderr="")
+
+    def fake_run(cmd, **_kwargs):
+        # Simulate ffmpeg producing the output file
+        import pathlib  # pylint: disable=import-outside-toplevel
+        pathlib.Path(cmd[-1]).write_bytes(b"webm-bytes")
+        return ok
+
+    with (
+        patch("optimize.shutil.which", return_value="/usr/bin/ffmpeg"),
+        patch("optimize._s3_client", return_value=mock_s3),
+        patch("optimize.subprocess.run", side_effect=fake_run),
+    ):
+        converted, cached = _convert_videos(tmp_path, cache_bucket="b", cache_prefix="site.com")
+
+    assert (converted, cached) == (1, 0)
+    assert (tmp_path / "clip.webm").exists()
+
+
+# ---------------------------------------------------------------------------
 # S3 upload (mock boto3)
 # ---------------------------------------------------------------------------
 
@@ -250,10 +397,13 @@ def test_sync_to_s3_uploads_with_correct_content_type(tmp_path):
     (tmp_path / "script.js").write_text("var x=1;")
 
     mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
     with patch("deploy._s3_client", return_value=mock_s3):
-        count = sync_to_s3(tmp_path, "test-bucket", "example.com")
+        result = sync_to_s3(tmp_path, "test-bucket", "example.com")
 
-    assert count == 3
+    assert result == {"uploaded": 3, "skipped": 0}
     assert mock_s3.upload_file.call_count == 3
 
     # Check HTML cache
@@ -279,12 +429,100 @@ def test_sync_to_s3_empty_prefix(tmp_path):
     (tmp_path / "index.html").write_text("<html></html>")
 
     mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
     with patch("deploy._s3_client", return_value=mock_s3):
-        count = sync_to_s3(tmp_path, "test-bucket", "")
+        result = sync_to_s3(tmp_path, "test-bucket", "")
 
-    assert count == 1
+    assert result == {"uploaded": 1, "skipped": 0}
     key = mock_s3.upload_file.call_args.kwargs["Key"]
     assert key == "index.html"  # no prefix/
+
+
+def test_sync_to_s3_skips_unchanged_files(tmp_path):
+    """A file whose sha256 matches the S3 object metadata is not re-uploaded."""
+    from deploy import file_sha256, sync_to_s3
+
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / "style.css").write_text("body{}")
+
+    mock_s3 = MagicMock()
+
+    def fake_head(**kwargs):
+        if kwargs["Key"].endswith("index.html"):
+            return {"Metadata": {"sha256": file_sha256(tmp_path / "index.html")}}
+        raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+
+    mock_s3.head_object.side_effect = fake_head
+    with patch("deploy._s3_client", return_value=mock_s3):
+        result = sync_to_s3(tmp_path, "test-bucket", "example.com")
+
+    assert result == {"uploaded": 1, "skipped": 1}
+    uploaded_keys = [c.kwargs["Key"] for c in mock_s3.upload_file.call_args_list]
+    assert uploaded_keys == ["example.com/style.css"]
+
+
+def test_sync_to_s3_uploads_sha256_metadata(tmp_path):
+    """Every uploaded object carries its sha256 in the S3 metadata."""
+    from deploy import file_sha256, sync_to_s3
+
+    (tmp_path / "index.html").write_text("<html></html>")
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+    with patch("deploy._s3_client", return_value=mock_s3):
+        sync_to_s3(tmp_path, "test-bucket", "example.com")
+
+    metadata = mock_s3.upload_file.call_args.kwargs["ExtraArgs"]["Metadata"]
+    assert metadata["sha256"] == file_sha256(tmp_path / "index.html")
+
+
+def test_sync_to_s3_merges_video_cache_manifest(tmp_path):
+    """Converted .webm uploads carry source-sha256/encoder metadata; the manifest is skipped."""
+    import json as json_mod
+
+    from deploy import VIDEO_CACHE_MANIFEST, sync_to_s3
+
+    (tmp_path / "clip.webm").write_bytes(b"webm-bytes")
+    (tmp_path / VIDEO_CACHE_MANIFEST).write_text(
+        json_mod.dumps({"clip.webm": {"source-sha256": "abc123", "encoder": "v1"}})
+    )
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+    with patch("deploy._s3_client", return_value=mock_s3):
+        result = sync_to_s3(tmp_path, "test-bucket", "example.com")
+
+    assert result == {"uploaded": 1, "skipped": 0}  # manifest itself is never uploaded
+    call = mock_s3.upload_file.call_args
+    assert call.kwargs["ExtraArgs"]["ContentType"] == "video/webm"
+    metadata = call.kwargs["ExtraArgs"]["Metadata"]
+    assert metadata["source-sha256"] == "abc123"
+    assert metadata["encoder"] == "v1"
+
+
+def test_sync_to_s3_skips_build_report(tmp_path):
+    """The build report is an internal pipeline artifact and is never uploaded."""
+    from deploy import BUILD_REPORT, sync_to_s3
+
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / BUILD_REPORT).write_text('{"files": []}')
+
+    mock_s3 = MagicMock()
+    mock_s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+    with patch("deploy._s3_client", return_value=mock_s3):
+        result = sync_to_s3(tmp_path, "test-bucket", "example.com")
+
+    assert result == {"uploaded": 1, "skipped": 0}
+    uploaded_keys = [c.kwargs["Key"] for c in mock_s3.upload_file.call_args_list]
+    assert uploaded_keys == ["example.com/index.html"]
 
 
 # ---------------------------------------------------------------------------
