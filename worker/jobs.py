@@ -316,6 +316,11 @@ _KIND_TO_BUCKET = {
     "other": "other",
 }
 
+# Cap on the pages.files list in the build report — the result travels
+# through Redis/the API and is stored by clients, so it must stay bounded.
+# count/bytes still reflect ALL pages.
+_PAGES_FILES_CAP = 200
+
 
 def _snapshot_workdir(workdir: pathlib.Path) -> dict[str, dict]:
     """
@@ -393,6 +398,22 @@ def _accumulate_entry(
         savings.append({"path": path, "original_bytes": original, "final_bytes": final})
 
 
+def _page_files(snapshot: dict[str, dict]) -> list[dict]:
+    """
+    Per-page list for the build report: one {"path", "bytes"} entry per HTML
+    file in the snapshot (bytes = scraped/original size), sorted by path and
+    capped at _PAGES_FILES_CAP — the result travels through Redis/the API and
+    is stored by clients, so the list must stay bounded while the pages
+    count/bytes still cover ALL pages.
+    """
+    pages = [
+        {"path": rel, "bytes": info["bytes"]}
+        for rel, info in sorted(snapshot.items())
+        if info["kind"] == "html"
+    ]
+    return pages[:_PAGES_FILES_CAP]
+
+
 def _build_report_summary(
     snapshot: dict[str, dict],
     report_files: list,
@@ -409,7 +430,9 @@ def _build_report_summary(
         snapshot walk and the bundle contributes sum(sources) → bundle size;
       - everything else is unchanged: final bytes = snapshot bytes;
       - HTML files additionally feed "pages" (count + scraped/original bytes;
-        the minification delta itself lives in assets.html).
+        the minification delta itself lives in assets.html) and "pages.files",
+        a per-page list of {path, bytes} (scraped size) sorted by path and
+        capped at _PAGES_FILES_CAP entries; count/bytes cover ALL pages.
     """
     buckets = {
         name: {"count": 0, "original_bytes": 0, "final_bytes": 0}
@@ -465,7 +488,11 @@ def _build_report_summary(
 
     html_bucket = buckets["html"]
     return {
-        "pages": {"count": html_bucket["count"], "bytes": html_bucket["original_bytes"]},
+        "pages": {
+            "count": html_bucket["count"],
+            "bytes": html_bucket["original_bytes"],
+            "files": _page_files(snapshot),
+        },
         "assets": assets,
         "totals": {
             "files": total_files,
