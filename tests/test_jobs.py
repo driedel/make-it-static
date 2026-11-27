@@ -336,7 +336,10 @@ def test_build_report_summary_aggregates_snapshot_and_report():
     summary = _build_report_summary(_sample_snapshot(), _sample_report_files(), steps)
 
     assert set(summary) == {"pages", "assets", "totals", "steps_seconds", "top_savings"}
-    assert summary["pages"] == {"count": 1, "bytes": 2000}
+    assert summary["pages"] == {
+        "count": 1, "bytes": 2000,
+        "files": [{"path": "index.html", "bytes": 2000}],
+    }
 
     assets = summary["assets"]
     assert list(assets) == ["images", "css", "js", "fonts", "videos", "html", "other"]
@@ -401,7 +404,32 @@ def test_build_report_summary_without_report_marks_everything_unchanged():
         "files": 2, "original_bytes": 1500, "final_bytes": 1500, "saved_pct": 0.0,
     }
     assert not summary["top_savings"]
-    assert summary["pages"] == {"count": 1, "bytes": 1000}
+    assert summary["pages"] == {
+        "count": 1, "bytes": 1000,
+        "files": [{"path": "index.html", "bytes": 1000}],
+    }
+
+
+def test_build_report_summary_pages_files_sorted_and_capped():
+    """pages.files is sorted by path and capped at 200; count/bytes cover all."""
+    from jobs import _build_report_summary
+
+    snapshot = {
+        f"pages/{i:03d}.html": {"bytes": 100, "kind": "html"}
+        for i in reversed(range(205))
+    }
+
+    summary = _build_report_summary(snapshot, [], {})
+
+    pages = summary["pages"]
+    assert pages["count"] == 205
+    assert pages["bytes"] == 20500
+    files = pages["files"]
+    assert len(files) == 200
+    paths = [f["path"] for f in files]
+    assert paths == sorted(paths)
+    assert paths[0] == "pages/000.html"
+    assert all(f == {"path": p, "bytes": 100} for f, p in zip(files, paths))
 
 
 def test_build_report_summary_empty_snapshot_saved_pct_zero():
@@ -416,6 +444,7 @@ def test_build_report_summary_empty_snapshot_saved_pct_zero():
     assert all(
         bucket["count"] == 0 for bucket in summary["assets"].values()
     )
+    assert summary["pages"] == {"count": 0, "bytes": 0, "files": []}
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +500,9 @@ def test_deploy_page_aggregates_optimize_report(mock_run, _mock_s3, _mock_cf, _m
         "count": 1, "original_bytes": 1000, "final_bytes": 300,
     }
     assert report["pages"]["count"] == 1
+    assert report["pages"]["files"] == [
+        {"path": "index.html", "bytes": len("<html>  <body>hi</body>  </html>")},
+    ]
     assert report["top_savings"] == [
         {"path": "photo.jpg", "original_bytes": 1000, "final_bytes": 300},
     ]
